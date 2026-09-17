@@ -163,3 +163,49 @@ def test_endpoint_export_report(client):
     assert data["problem_statement"] == "SIH26142 - Deep Learning Super-Resolution Mapping for Medium-Resolution Satellite Imagery"
     assert "metrics" in data
     assert "spectral_integrity_compliance" in data
+
+
+def test_endpoint_downstream_masks(client):
+    """POST /api/downstream-masks returns binary mask overlays and segmentation metrics"""
+    resp = client.post(
+        "/api/downstream-masks",
+        data={"sample_id": "sample_real_s2", "model_id": "rcan"}
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "success"
+    assert "canopy_segmentation" in data["tasks"]
+    assert "built_up_infrastructure" in data["tasks"]
+    canopy = data["tasks"]["canopy_segmentation"]
+    assert "rcan" in canopy
+    assert "bicubic" in canopy
+    assert "masks" in canopy
+    assert "rcan" in canopy["masks"]
+    assert canopy["masks"]["rcan"].startswith("data:image/png;base64,")
+
+
+def test_endpoint_run_caching_and_run_id_geotiff(client):
+    """POST /api/superresolve returns a run_id which can be used to export GeoTIFF and inspect pixels"""
+    sr_resp = client.post(
+        "/api/superresolve",
+        data={"sample_id": "sample_real_s2", "model_id": "rcan"}
+    )
+    assert sr_resp.status_code == 200
+    sr_data = sr_resp.json()
+    assert "run_id" in sr_data
+    run_id = sr_data["run_id"]
+
+    # Download GeoTIFF by run_id
+    tif_resp = client.get(f"/api/export/geotiff?run_id={run_id}")
+    assert tif_resp.status_code == 200
+    assert tif_resp.headers["content-type"] == "image/tiff"
+
+    # Inspect pixel by run_id
+    px_resp = client.post(
+        "/api/pixel-profile",
+        data={"run_id": run_id, "x": 100, "y": 100, "model_id": "rcan"}
+    )
+    assert px_resp.status_code == 200
+    px_data = px_resp.json()
+    assert px_data["run_id"] == run_id
+    assert len(px_data["bands_data"]) == 4

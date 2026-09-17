@@ -19,6 +19,9 @@ interface Props {
   groundTruthViews?: MultiSpectralViews;
   beforeLabel?: string;
   afterLabel?: string;
+  onInspectPixel?: (x: number, y: number) => void;
+  inspectedPoint?: { x: number; y: number } | null;
+  uncertaintyThreshold?: number;
 }
 
 export default function ImageComparisonSlider({
@@ -34,12 +37,26 @@ export default function ImageComparisonSlider({
   groundTruthViews,
   beforeLabel = "LR Input (10m)",
   afterLabel = "BharatSR Output (2.5m-equiv)",
+  onInspectPixel,
+  inspectedPoint,
+  uncertaintyThreshold = 0,
 }: Props) {
   const [sliderPosition, setSliderPosition] = useState(50);
   const [isDragging, setIsDragging] = useState(false);
   const [activeView, setActiveView] = useState<ViewMode>("slider");
   const [activeBand, setActiveBand] = useState<SpectralBand>("rgb");
   const containerRef = useRef<HTMLDivElement>(null);
+
+  const handleCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!onInspectPixel) return;
+    const target = e.currentTarget;
+    const rect = target.getBoundingClientRect();
+    const relX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const relY = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+    const px = Math.floor(relX * 256);
+    const py = Math.floor(relY * 256);
+    onInspectPixel(px, py);
+  };
 
   // Select image source based on active spectral band
   const currentBefore = (beforeViews && beforeViews[activeBand]) || beforeSrc;
@@ -271,7 +288,8 @@ export default function ImageComparisonSlider({
           ref={containerRef}
           onMouseDown={() => setIsDragging(true)}
           onTouchStart={() => setIsDragging(true)}
-          className="comparison-container aspect-square max-h-[520px] mx-auto cursor-ew-resize select-none relative"
+          onClick={handleCanvasClick}
+          className="comparison-container aspect-square max-h-[520px] mx-auto cursor-crosshair select-none relative"
         >
           {/* Under image (SR Output) */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -280,6 +298,23 @@ export default function ImageComparisonSlider({
             alt={afterLabel}
             className="comparison-image w-full h-full object-contain"
           />
+
+          {/* Uncertainty Threshold Alert Mask */}
+          {uncertaintyThreshold > 0 && uncertaintySrc && (
+            <div
+              className="absolute inset-0 pointer-events-none z-10 mix-blend-screen opacity-75"
+              style={{
+                filter: `contrast(200%) brightness(${100 + uncertaintyThreshold * 200}%)`,
+              }}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={uncertaintySrc}
+                alt="Uncertainty Alert Mask"
+                className="w-full h-full object-contain"
+              />
+            </div>
+          )}
 
           {/* Over image (LR Input clipped) */}
           <div
@@ -299,6 +334,23 @@ export default function ImageComparisonSlider({
               className="comparison-image"
             />
           </div>
+
+          {/* Tactical Coordinate Reticle (Inspected Point) */}
+          {inspectedPoint && (
+            <div
+              className="absolute pointer-events-none z-30 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center"
+              style={{
+                left: `${(inspectedPoint.x / 256) * 100}%`,
+                top: `${(inspectedPoint.y / 256) * 100}%`,
+              }}
+            >
+              <span className="w-6 h-6 rounded-full border-2 border-cyan-400 animate-ping absolute opacity-75" />
+              <span className="w-3 h-3 rounded-full bg-cyan-400/90 border border-white shadow-lg" />
+              <span className="absolute -top-6 left-3 text-[9px] font-mono bg-black/90 px-1.5 py-0.5 rounded text-cyan-300 border border-cyan-500/50 whitespace-nowrap shadow-md">
+                Point ({inspectedPoint.x}, {inspectedPoint.y})
+              </span>
+            </div>
+          )}
 
           {/* Divider Handle */}
           <div
@@ -341,13 +393,29 @@ export default function ImageComparisonSlider({
             />
           </div>
 
-          <div className="glass-panel p-3 border-cyan-500/30">
+          <div 
+            className="glass-panel p-3 border-cyan-500/30 cursor-crosshair relative"
+            onClick={handleCanvasClick}
+          >
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-semibold text-cyan-300">
                 {afterLabel} ({activeBand.toUpperCase()})
               </span>
               <span className="text-[10px] text-cyan-500 font-mono">4x Enhanced (2.5m-equiv Grid)</span>
             </div>
+            {/* Tactical Coordinate Reticle (Inspected Point) */}
+            {inspectedPoint && (
+              <div
+                className="absolute pointer-events-none z-30 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center"
+                style={{
+                  left: `${(inspectedPoint.x / 256) * 100}%`,
+                  top: `${(inspectedPoint.y / 256) * 100}%`,
+                }}
+              >
+                <span className="w-6 h-6 rounded-full border-2 border-cyan-400 animate-ping absolute opacity-75" />
+                <span className="w-3 h-3 rounded-full bg-cyan-400/90 border border-white shadow-lg" />
+              </div>
+            )}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={currentAfter}

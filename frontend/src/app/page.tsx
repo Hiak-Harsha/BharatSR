@@ -15,11 +15,13 @@ import {
   getPixelProfile,
   getGeoTIFFDownloadUrl,
   getReportDownloadUrl,
+  getDownstreamMasks,
   ModelInfo,
   SampleTile,
   SuperResolveResponse,
   CompareResponse,
   PixelProfileResponse,
+  DownstreamMasksResponse,
 } from "@/lib/api";
 
 export default function Home() {
@@ -27,7 +29,7 @@ export default function Home() {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("rcan");
   const [samples, setSamples] = useState<SampleTile[]>([]);
-  const [selectedSample, setSelectedSample] = useState<string | null>(null);
+  const [selectedSample, setSelectedSample] = useState<string | null>("sample_real_s2");
 
   const [inputTab, setInputTab] = useState<"samples" | "upload">("samples");
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
@@ -36,15 +38,25 @@ export default function Home() {
   const [loadingAction, setLoadingAction] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
 
-  // Results
+  // Results & Active Session Cache
   const [result, setResult] = useState<SuperResolveResponse | null>(null);
   const [compareResult, setCompareResult] = useState<CompareResponse | null>(null);
   const [activeCompareModel, setActiveCompareModel] = useState<string>("rcan");
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
 
-  // Pixel Profile Inspector
+  // Interactive Coordinate Inspection & Spatial Reticle
+  const [inspectedPoint, setInspectedPoint] = useState<{ x: number; y: number } | null>({ x: 128, y: 128 });
   const [pixelProfile, setPixelProfile] = useState<PixelProfileResponse | null>(null);
   const [loadingPixel, setLoadingPixel] = useState(false);
   const [pixelCoord, setPixelCoord] = useState<{ x: number; y: number }>({ x: 128, y: 128 });
+
+  // Spatial Uncertainty Alert Threshold (0 = disabled, >0 = overlay)
+  const [uncertaintyThreshold, setUncertaintyThreshold] = useState<number>(0);
+
+  // Downstream Task Analytical Segmentation
+  const [downstreamMasks, setDownstreamMasks] = useState<DownstreamMasksResponse | null>(null);
+  const [loadingDownstream, setLoadingDownstream] = useState<boolean>(false);
+  const [activeDownstreamTask, setActiveDownstreamTask] = useState<"canopy_segmentation" | "built_up_infrastructure">("canopy_segmentation");
 
   // Async Jobs
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
@@ -72,7 +84,8 @@ export default function Home() {
         setRecentJobs(fetchedJobs);
 
         if (fetchedSamples.length > 0) {
-          setSelectedSample(fetchedSamples[0].id);
+          const realSample = fetchedSamples.find((s) => s.id === "sample_real_s2") || fetchedSamples[0];
+          setSelectedSample(realSample.id);
         }
       } catch (e) {
         console.error("Failed to connect to backend", e);
@@ -91,6 +104,11 @@ export default function Home() {
         const job = await getJobStatus(activeJobId);
         if (job.status === "completed" && job.result) {
           setResult(job.result);
+          if (job.result.run_id) {
+            setActiveRunId(job.result.run_id);
+            inspectPixel(undefined, job.result.run_id, 128, 128, selectedModel);
+            fetchDownstream(undefined, job.result.run_id, selectedModel);
+          }
           setJobStatusMsg(`✓ Job ${activeJobId} completed in ${job.inference_time_s}s`);
           setActiveJobId(null);
           getJobs().then(setRecentJobs).catch(() => {});
@@ -106,19 +124,39 @@ export default function Home() {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [activeJobId]);
+  }, [activeJobId, selectedModel]);
 
-  // Inspect Pixel Profile
-  const inspectPixel = async (sampleId: string, x: number, y: number, modelId: string = "rcan") => {
+  // Inspect Pixel Profile (supports both sample_id and user uploaded run_id)
+  const inspectPixel = async (
+    sampleId?: string,
+    runId?: string,
+    x: number = 128,
+    y: number = 128,
+    modelId: string = "rcan"
+  ) => {
     setLoadingPixel(true);
     setPixelCoord({ x, y });
+    setInspectedPoint({ x, y });
     try {
-      const prof = await getPixelProfile(sampleId, x, y, modelId);
+      const prof = await getPixelProfile(sampleId, runId, x, y, modelId);
       setPixelProfile(prof);
     } catch (e) {
       console.error("Pixel inspection error:", e);
     } finally {
       setLoadingPixel(false);
+    }
+  };
+
+  // Fetch Downstream Segmentation Masks (Micro-Canopy & Built-up Infrastructure)
+  const fetchDownstream = async (sampleId?: string, runId?: string, modelId: string = "rcan") => {
+    setLoadingDownstream(true);
+    try {
+      const masks = await getDownstreamMasks(sampleId, runId, modelId);
+      setDownstreamMasks(masks);
+    } catch (e) {
+      console.error("Downstream masks error:", e);
+    } finally {
+      setLoadingDownstream(false);
     }
   };
 
@@ -132,10 +170,21 @@ export default function Home() {
       let res: SuperResolveResponse;
       if (inputTab === "samples" && selectedSample) {
         res = await superresolveSample(selectedSample, selectedModel);
-        // Automatically inspect a central pixel to populate radiometric curve
-        inspectPixel(selectedSample, 128, 128, selectedModel);
+        if (res.run_id) {
+          setActiveRunId(res.run_id);
+          inspectPixel(selectedSample, res.run_id, 128, 128, selectedModel);
+          fetchDownstream(selectedSample, res.run_id, selectedModel);
+        } else {
+          inspectPixel(selectedSample, undefined, 128, 128, selectedModel);
+          fetchDownstream(selectedSample, undefined, selectedModel);
+        }
       } else if (inputTab === "upload" && uploadedFile) {
         res = await superresolveUpload(uploadedFile, selectedModel);
+        if (res.run_id) {
+          setActiveRunId(res.run_id);
+          inspectPixel(undefined, res.run_id, 128, 128, selectedModel);
+          fetchDownstream(undefined, res.run_id, selectedModel);
+        }
       } else {
         throw new Error("Please select a sample tile or upload an image.");
       }
@@ -161,9 +210,21 @@ export default function Home() {
       let res: CompareResponse;
       if (inputTab === "samples" && selectedSample) {
         res = await compareModels(selectedSample, undefined);
-        inspectPixel(selectedSample, 128, 128, "rcan");
+        if (res.run_id) {
+          setActiveRunId(res.run_id);
+          inspectPixel(selectedSample, res.run_id, 128, 128, "rcan");
+          fetchDownstream(selectedSample, res.run_id, "rcan");
+        } else {
+          inspectPixel(selectedSample, undefined, 128, 128, "rcan");
+          fetchDownstream(selectedSample, undefined, "rcan");
+        }
       } else if (inputTab === "upload" && uploadedFile) {
         res = await compareModels(undefined, uploadedFile);
+        if (res.run_id) {
+          setActiveRunId(res.run_id);
+          inspectPixel(undefined, res.run_id, 128, 128, "rcan");
+          fetchDownstream(undefined, res.run_id, "rcan");
+        }
       } else {
         throw new Error("Please select a sample tile or upload an image.");
       }
@@ -548,30 +609,43 @@ export default function Home() {
           </div>
 
           {/* 3. Export & Verification Download Card */}
-          {selectedSample && (
+          {(selectedSample || activeRunId) && (
             <div className="glass-panel p-4 space-y-3">
-              <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
-                Export Calibrated Imagery & Report
-              </h3>
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                  Export Calibrated Imagery & Report
+                </h3>
+                {activeRunId && (
+                  <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800/60">
+                    Live Session Cached
+                  </span>
+                )}
+              </div>
               <p className="text-[11px] text-slate-400">
-                Direct export for GIS integration (QGIS / ArcGIS / GDAL) and hackathon validation:
+                Direct export for defense GIS integration (QGIS / ArcGIS / GDAL) with CRS preserved:
               </p>
               <div className="grid grid-cols-2 gap-2">
                 <a
-                  href={getGeoTIFFDownloadUrl(selectedSample, selectedModel)}
+                  href={getGeoTIFFDownloadUrl(selectedSample || undefined, activeRunId || undefined, selectedModel)}
                   target="_blank"
                   rel="noreferrer"
-                  className="py-2 px-3 rounded-lg bg-slate-900 border border-slate-800 hover:border-emerald-500/50 text-xs text-emerald-300 text-center font-medium transition block"
+                  className="py-2 px-3 rounded-lg bg-slate-900 border border-slate-800 hover:border-emerald-500/50 text-xs text-emerald-300 text-center font-medium transition flex items-center justify-center gap-1.5"
                 >
-                  📥 4-Band GeoTIFF (.tif)
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  4-Band GeoTIFF (.tif)
                 </a>
                 <a
-                  href={getReportDownloadUrl(selectedSample, selectedModel)}
+                  href={getReportDownloadUrl(selectedSample || "sample_real_s2", selectedModel)}
                   target="_blank"
                   rel="noreferrer"
-                  className="py-2 px-3 rounded-lg bg-slate-900 border border-slate-800 hover:border-cyan-500/50 text-xs text-cyan-300 text-center font-medium transition block"
+                  className="py-2 px-3 rounded-lg bg-slate-900 border border-slate-800 hover:border-cyan-500/50 text-xs text-cyan-300 text-center font-medium transition flex items-center justify-center gap-1.5"
                 >
-                  📊 Physics Report (.json)
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Physics Report (.json)
                 </a>
               </div>
             </div>
@@ -701,6 +775,9 @@ export default function Home() {
                   errorMapSrc={activeSR.error_map?.image}
                   beforeLabel={`LR Input (${activeInput.shape[1]}×${activeInput.shape[2]})`}
                   afterLabel={`${activeSR.model_id.toUpperCase()} 4x (2.5m-equiv Grid)`}
+                  onInspectPixel={(x, y) => inspectPixel(selectedSample || undefined, activeRunId || undefined, x, y, activeSR.model_id)}
+                  inspectedPoint={inspectedPoint}
+                  uncertaintyThreshold={uncertaintyThreshold}
                 />
               </div>
 
@@ -918,35 +995,33 @@ export default function Home() {
                         Multi-Spectral Radiometric Signature Analyzer
                       </h3>
                       <p className="text-[11px] text-slate-400">
-                        Pointwise 4-band reflectance signature across Blue (490nm), Green (560nm), Red (665nm), and NIR (842nm)
+                        Click anywhere on the enhanced viewer to inspect coordinates, or choose a tactical preset:
                       </p>
                     </div>
                   </div>
 
                   {/* Preset Points */}
-                  {selectedSample && (
-                    <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                      <span className="text-[10px] text-slate-500 uppercase font-mono mr-1">Presets:</span>
-                      <button
-                        onClick={() => inspectPixel(selectedSample, 100, 100, selectedModel)}
-                        className="px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-850 border border-slate-800 text-[11px] text-emerald-300 transition"
-                      >
-                        🌿 Vegetation
-                      </button>
-                      <button
-                        onClick={() => inspectPixel(selectedSample, 180, 150, selectedModel)}
-                        className="px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-850 border border-slate-800 text-[11px] text-sky-300 transition"
-                      >
-                        🏢 Built-up
-                      </button>
-                      <button
-                        onClick={() => inspectPixel(selectedSample, 50, 120, selectedModel)}
-                        className="px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-850 border border-slate-800 text-[11px] text-amber-300 transition"
-                      >
-                        🛣️ Soil/Route
-                      </button>
-                    </div>
-                  )}
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                    <span className="text-[10px] text-slate-500 uppercase font-mono mr-1">Presets:</span>
+                    <button
+                      onClick={() => inspectPixel(selectedSample || undefined, activeRunId || undefined, 100, 100, activeSR.model_id)}
+                      className="px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-850 border border-slate-800 text-[11px] text-emerald-300 transition"
+                    >
+                      🌿 Vegetation
+                    </button>
+                    <button
+                      onClick={() => inspectPixel(selectedSample || undefined, activeRunId || undefined, 180, 150, activeSR.model_id)}
+                      className="px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-850 border border-slate-800 text-[11px] text-sky-300 transition"
+                    >
+                      🏢 Built-up
+                    </button>
+                    <button
+                      onClick={() => inspectPixel(selectedSample || undefined, activeRunId || undefined, 50, 120, activeSR.model_id)}
+                      className="px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-850 border border-slate-800 text-[11px] text-amber-300 transition"
+                    >
+                      🛣️ Soil/Route
+                    </button>
+                  </div>
                 </div>
 
                 {pixelProfile ? (
@@ -1098,6 +1173,44 @@ export default function Home() {
                     </div>
                   </div>
 
+                    {/* Uncertainty Alert Filter Slider */}
+                    <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-semibold text-slate-200">
+                            Defense Uncertainty Alert Mask Overlay
+                          </span>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800/60">
+                            Threshold τ = {uncertaintyThreshold.toFixed(2)}
+                          </span>
+                        </div>
+                        {uncertaintyThreshold > 0 && (
+                          <button
+                            onClick={() => setUncertaintyThreshold(0)}
+                            className="text-[10px] text-slate-400 hover:text-slate-200 underline font-mono"
+                          >
+                            Disable Overlay
+                          </button>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-400">
+                        Dynamically highlight high-variance edge boundaries on the viewer to prevent analyst overconfidence in tactical interpretations.
+                      </p>
+                      <div className="flex items-center gap-3 pt-1">
+                        <span className="text-[10px] font-mono text-slate-500">0.0 (Off)</span>
+                        <input
+                          type="range"
+                          min="0"
+                          max="0.4"
+                          step="0.02"
+                          value={uncertaintyThreshold}
+                          onChange={(e) => setUncertaintyThreshold(parseFloat(e.target.value))}
+                          className="flex-1 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-amber-400"
+                        />
+                        <span className="text-[10px] font-mono text-amber-400">0.40 (High Variance)</span>
+                      </div>
+                    </div>
+
                   {/* Uncertainty vs Error Scatter Plot Display */}
                   {activeSR.uncertainty.scatter && (
                     <div className="p-3.5 rounded-xl bg-slate-900/70 border border-slate-800 space-y-2">
@@ -1142,6 +1255,163 @@ export default function Home() {
                   )}
                 </div>
               )}
+
+              {/* Downstream Analytical Task Evaluation Visualizer */}
+              <div className="glass-panel p-5 space-y-4 border-emerald-500/30">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">🎯</span>
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-200">
+                        Downstream Task Analytical Segmentation Visualizer
+                      </h3>
+                      <p className="text-[11px] text-slate-400">
+                        Empirical verification of tactical value on automated segmentation pipelines (Canopy & Infrastructure)
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Task Tabs */}
+                  <div className="flex items-center gap-1.5 bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs font-medium">
+                    <button
+                      onClick={() => setActiveDownstreamTask("canopy_segmentation")}
+                      className={`px-3 py-1 rounded transition text-[11px] ${
+                        activeDownstreamTask === "canopy_segmentation"
+                          ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold"
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      🌿 Micro-Canopy
+                    </button>
+                    <button
+                      onClick={() => setActiveDownstreamTask("built_up_infrastructure")}
+                      className={`px-3 py-1 rounded transition text-[11px] ${
+                        activeDownstreamTask === "built_up_infrastructure"
+                          ? "bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold"
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      🏢 Built-up Infrastructure
+                    </button>
+                  </div>
+                </div>
+
+                {downstreamMasks && downstreamMasks.tasks[activeDownstreamTask] ? (
+                  (() => {
+                    const task = downstreamMasks.tasks[activeDownstreamTask];
+                    return (
+                      <div className="space-y-4">
+                        <div className="text-xs text-slate-400">
+                          {task.description} • Ground Truth Targets: <strong className="text-slate-200 font-mono">{task.ground_truth_pixel_count.toLocaleString()} px</strong>
+                        </div>
+
+                        {/* 3-way/4-way Masks Grid */}
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                          <div className="glass-panel p-2.5 bg-slate-950/60 border border-amber-500/20">
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="text-xs font-semibold text-amber-300">1. Bicubic Baseline</span>
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-400 font-mono">2.5m Grid</span>
+                            </div>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={task.masks.bicubic}
+                              alt="Bicubic Mask"
+                              className="w-full aspect-square rounded-lg object-contain bg-black"
+                              style={{ imageRendering: "pixelated" }}
+                            />
+                            <div className="mt-1.5 text-[10px] text-slate-500 text-center">Coarse Edge Dilations</div>
+                          </div>
+
+                          <div className="glass-panel p-2.5 bg-slate-950/60 border border-cyan-500/40">
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="text-xs font-semibold text-cyan-300">2. BharatSR (2.5m)</span>
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 font-mono">Enhanced</span>
+                            </div>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={task.masks.rcan}
+                              alt="SR Mask"
+                              className="w-full aspect-square rounded-lg object-contain bg-black shadow-md shadow-cyan-950/40"
+                              style={{ imageRendering: "pixelated" }}
+                            />
+                            <div className="mt-1.5 text-[10px] text-cyan-400/80 text-center">Sharper Boundary Delineation</div>
+                          </div>
+
+                          <div className="glass-panel p-2.5 bg-slate-950/60 border border-emerald-500/40">
+                            <div className="flex items-center justify-between mb-1.5">
+                              <span className="text-xs font-semibold text-emerald-300">3. Ground Truth HR</span>
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 font-mono">Target</span>
+                            </div>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={task.masks.ground_truth || task.masks.rcan}
+                              alt="HR Reference Mask"
+                              className="w-full aspect-square rounded-lg object-contain bg-black shadow-md shadow-emerald-950/40"
+                              style={{ imageRendering: "pixelated" }}
+                            />
+                            <div className="mt-1.5 text-[10px] text-emerald-400/80 text-center">
+                              {task.masks.ground_truth ? "Reference Ground Truth" : "Self-Refined Target"}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Benchmark Metrics Table */}
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-xs border-collapse">
+                            <thead>
+                              <tr className="border-b border-slate-800 text-slate-400 font-mono text-[11px]">
+                                <th className="py-2 px-3">Super-Resolution Pipeline</th>
+                                <th className="py-2 px-3">IoU (Jaccard Index)</th>
+                                <th className="py-2 px-3">F1 Score (Dice)</th>
+                                <th className="py-2 px-3">Precision</th>
+                                <th className="py-2 px-3">Recall</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-800/60 font-mono">
+                              <tr className="hover:bg-slate-900/40 transition">
+                                <td className="py-2.5 px-3 text-amber-300 font-sans font-medium">1. Bicubic Baseline (2.5m)</td>
+                                <td className="py-2.5 px-3 text-amber-300">{task.bicubic.iou.toFixed(3)}</td>
+                                <td className="py-2.5 px-3 text-amber-300">{task.bicubic.f1.toFixed(3)}</td>
+                                <td className="py-2.5 px-3 text-amber-300">{task.bicubic.precision.toFixed(3)}</td>
+                                <td className="py-2.5 px-3 text-amber-300">{task.bicubic.recall.toFixed(3)}</td>
+                              </tr>
+                              <tr className="hover:bg-slate-900/40 transition bg-cyan-950/20">
+                                <td className="py-2.5 px-3 text-cyan-300 font-sans font-bold flex items-center gap-1.5">
+                                  <span>🚀</span> 2. BharatSR Output (2.5m)
+                                </td>
+                                <td className="py-2.5 px-3 text-cyan-300 font-bold">{task.rcan.iou.toFixed(3)}</td>
+                                <td className="py-2.5 px-3 text-cyan-300 font-bold">{task.rcan.f1.toFixed(3)}</td>
+                                <td className="py-2.5 px-3 text-cyan-300 font-bold">{task.rcan.precision.toFixed(3)}</td>
+                                <td className="py-2.5 px-3 text-cyan-300 font-bold">{task.rcan.recall.toFixed(3)}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+
+                        <div className="p-2.5 rounded-lg bg-slate-900/70 border border-slate-800 text-[11px] text-slate-400 flex items-center justify-between">
+                          <span>
+                            🔬 <strong>Tactical Takeaway:</strong> BharatSR achieves higher IoU ({task.rcan.iou.toFixed(3)} vs {task.bicubic.iou.toFixed(3)} Bicubic), eliminating sub-pixel boundary blur and reducing false positive area leakage.
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })()
+                ) : (
+                  <div className="text-center py-6 space-y-2">
+                    <p className="text-xs text-slate-500">
+                      {loadingDownstream ? "Evaluating downstream automated segmentation pipelines..." : "Downstream masks will appear once super-resolution inference is triggered."}
+                    </p>
+                    {!loadingDownstream && (
+                      <button
+                        onClick={() => fetchDownstream(selectedSample || undefined, activeRunId || undefined, activeSR.model_id)}
+                        className="px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs font-medium hover:bg-emerald-500/30 transition"
+                      >
+                        Evaluate Downstream Tasks
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
             </>
           ) : (
             /* Placeholder state before processing */

@@ -5,6 +5,8 @@ Target: Sentinel-2 L2A (10m) -> 4x SR on 2.5m-equivalent grid (B2, B3, B4, B8)
 """
 
 import sys
+import io
+import uuid
 import base64
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
@@ -15,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import numpy as np
 import json
+from PIL import Image
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -26,9 +29,11 @@ from backend.app.schemas import (
     SuperResolveResponse, CompareResponse,
     PixelProfileResponse, BandProfile,
     AsyncJobSubmitResponse, JobStatusResponse, JobListResponse,
-    ReportResponse
+    ReportResponse, DownstreamMasksResponse, DownstreamTaskItem, DownstreamTaskMetrics
 )
-from backend.app.services.inference import model_registry, run_inference, run_bicubic_baseline
+from backend.app.services.inference import (
+    model_registry, run_inference, run_bicubic_baseline, run_tiled_inference
+)
 from backend.app.services.preprocessing import (
     load_image_from_bytes, load_sample_tile, numpy_to_png_bytes,
     generate_multi_spectral_views, export_geotiff_bytes
@@ -36,6 +41,25 @@ from backend.app.services.preprocessing import (
 from backend.app.services.postprocessing import compute_inference_metrics
 from backend.app.services.job_store import JobStore
 from backend.app.models_ml.uncertainty import generate_uncertainty_heatmap, summarize_uncertainty
+from evaluation.downstream_task import (
+    segment_micro_canopy, segment_built_up_infrastructure, compute_segmentation_metrics
+)
+
+
+def mask_to_png_bytes(mask: np.ndarray, color_rgb: Tuple[int, int, int]) -> bytes:
+    """Renders binary mask as RGBA PNG bytes with color overlay."""
+    h, w = mask.shape
+    rgba = np.zeros((h, w, 4), dtype=np.uint8)
+    active = mask > 0
+    rgba[active, 0] = color_rgb[0]
+    rgba[active, 1] = color_rgb[1]
+    rgba[active, 2] = color_rgb[2]
+    rgba[active, 3] = 220  # Alpha opacity
+    rgba[~active, 3] = 0
+
+    buf = io.BytesIO()
+    Image.fromarray(rgba).save(buf, format="PNG")
+    return buf.getvalue()
 
 
 # ========================
@@ -161,9 +185,20 @@ def _execute_model_sr(model_id: str, lr_image: np.ndarray, hr_image: Optional[np
         model = model_registry.get_model(model_id)
         if model is None:
             raise HTTPException(status_code=400, detail=f"Model '{model_id}' not loaded or checkpoint missing.")
-        sr_image, latency, uncertainty_map = run_inference(
-            model, lr_image, scale_factor, model_registry.device
-        )
+        _, h_lr, w_lr = lr_image.shape
+        if h_lr > 64 or w_lr > 64:
+            sr_image, latency, uncertainty_map = run_tiled_inference(
+                model=model,
+                lr_image=lr_image,
+                scale_factor=scale_factor,
+                tile_size=64,
+                overlap=16,
+                device=model_registry.device,
+            )
+        else:
+            sr_image, latency, uncertainty_map = run_inference(
+                model, lr_image, scale_factor, model_registry.device
+            )
 
     metrics = compute_inference_metrics(
         sr=sr_image,
@@ -364,6 +399,8 @@ async def list_samples():
             except Exception as e:
                 print(f"Error loading sample tile {f}: {e}")
 
+    # Sort so genuine georeferenced satellite scenes appear first, followed by verification patterns
+    samples.sort(key=lambda s: (not s.has_geo, s.id))
     return SamplesListResponse(samples=samples)
 
 
@@ -388,7 +425,24 @@ async def superresolve(
     scale_factor = model_meta.get("scale_factor", 4)
 
     result = _execute_model_sr(model_id, lr_image, hr_image, scale_factor)
-    result.pop("_sr_array")
+    sr_array = result.pop("_sr_array")
+
+    # Generate a unique run_id and cache the run state on disk for GeoTIFF export and pixel inspection
+    run_id = f"run_{uuid.uuid4().hex[:10]}"
+    run_path = RUNS_DIR / f"{run_id}.npz"
+    try:
+        np.savez_compressed(
+            str(run_path),
+            sr=sr_array,
+            lr=lr_image,
+            hr=hr_image if hr_image is not None else np.zeros((0,), dtype=np.float32),
+            has_hr=hr_image is not None,
+            geo_json=json.dumps(geo_metadata) if geo_metadata else "",
+            model_id=model_id,
+            scale_factor=scale_factor,
+        )
+    except Exception as e:
+        print(f"Warning: could not cache run {run_id}: {e}")
 
     # Generate bicubic baseline views for 4-view Evidence Mode
     bicubic_sr, _ = run_bicubic_baseline(lr_image, scale_factor=scale_factor)
@@ -403,6 +457,7 @@ async def superresolve(
     response = {
         "status": "success",
         "model_id": model_id,
+        "run_id": run_id,
         "inference_time_s": result["inference_time_s"],
         "input": {
             "shape": list(lr_image.shape),
@@ -515,8 +570,31 @@ async def compare(
         latency_row[m_id] = results[m_id]["inference_time_s"]
     comparison_table.append(latency_row)
 
+    # Cache RCAN run so that user can immediately download GeoTIFF or inspect pixels after compare
+    run_id = f"run_{uuid.uuid4().hex[:10]}"
+    if "rcan" in results and "_sr_array" in results["rcan"]:
+        rcan_sr = results["rcan"]["_sr_array"]
+        try:
+            np.savez_compressed(
+                str(RUNS_DIR / f"{run_id}.npz"),
+                sr=rcan_sr,
+                lr=lr_image,
+                hr=hr_image if hr_image is not None else np.zeros((0,), dtype=np.float32),
+                has_hr=hr_image is not None,
+                geo_json=json.dumps(geo_metadata) if geo_metadata else "",
+                model_id="rcan",
+                scale_factor=4,
+            )
+        except Exception as e:
+            print(f"Warning: could not cache compare run: {e}")
+
+    for m_id in model_ids:
+        if "_sr_array" in results[m_id]:
+            results[m_id].pop("_sr_array")
+
     response = {
         "status": "success",
+        "run_id": run_id,
         "input": {
             "shape": list(lr_image.shape),
             "image": input_views.get("rgb", ""),
@@ -542,27 +620,42 @@ async def compare(
 
 @app.post("/api/pixel-profile", response_model=PixelProfileResponse)
 async def pixel_profile(
-    sample_id: str = Form(...),
+    sample_id: Optional[str] = Form(None),
+    run_id: Optional[str] = Form(None),
     x: int = Form(128),
     y: int = Form(128),
     model_id: str = Form("rcan"),
 ):
     """
     Extract multi-band spectral reflectance profile at coordinate (x, y).
+    Supports either pre-loaded sample_id or an active uploaded run_id.
     Compares LR, SR, and HR ground truth curves across B2, B3, B4, B8.
     Calculates exact spectral angle and provides rule-based spectral interpretation.
     """
-    sample_tiles_dir = Path(__file__).parent.parent / "sample_tiles"
-    sample_path = sample_tiles_dir / f"{sample_id}.npz"
-    if not sample_path.exists():
-        raise HTTPException(status_code=404, detail="Sample tile not found")
+    if not sample_id and not run_id:
+        raise HTTPException(status_code=400, detail="Provide either 'sample_id' or 'run_id'")
 
-    lr_image, hr_image = load_sample_tile(str(sample_path))
-    model_meta = model_registry.get_metadata(model_id) or {}
-    scale_factor = model_meta.get("scale_factor", 4)
+    if run_id:
+        run_path = RUNS_DIR / f"{run_id}.npz"
+        if not run_path.exists():
+            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+        data = np.load(str(run_path))
+        sr_array = data["sr"].astype(np.float32)
+        lr_image = data["lr"].astype(np.float32)
+        hr_image = data["hr"].astype(np.float32) if data.get("has_hr", False) and data["hr"].size > 0 else None
+        scale_factor = int(data.get("scale_factor", 4))
+    else:
+        sample_tiles_dir = Path(__file__).parent.parent / "sample_tiles"
+        sample_path = sample_tiles_dir / f"{sample_id}.npz"
+        if not sample_path.exists():
+            raise HTTPException(status_code=404, detail="Sample tile not found")
 
-    result = _execute_model_sr(model_id, lr_image, hr_image, scale_factor)
-    sr_array = result["_sr_array"]
+        lr_image, hr_image = load_sample_tile(str(sample_path))
+        model_meta = model_registry.get_metadata(model_id) or {}
+        scale_factor = model_meta.get("scale_factor", 4)
+
+        result = _execute_model_sr(model_id, lr_image, hr_image, scale_factor)
+        sr_array = result["_sr_array"]
 
     c, h_hr, w_hr = sr_array.shape
     x = max(0, min(int(x), w_hr - 1))
@@ -649,6 +742,7 @@ async def pixel_profile(
     return PixelProfileResponse(
         status="success",
         sample_id=sample_id,
+        run_id=run_id,
         model_id=model_id,
         hr_coordinates={"x": x, "y": y},
         lr_coordinates={"x": x_lr, "y": y_lr},
@@ -664,6 +758,92 @@ async def pixel_profile(
         signature_analysis=signature_note,
         interpretation_disclaimer="Rule-based spectral interpretation (heuristic, not ground truth)",
     )
+
+
+@app.post("/api/downstream-masks", response_model=DownstreamMasksResponse)
+async def downstream_masks(
+    sample_id: Optional[str] = Form(None),
+    run_id: Optional[str] = Form(None),
+    model_id: str = Form("rcan"),
+):
+    """
+    Computes binary segmentation masks and real-time IoU/F1 metrics for
+    downstream analytical tasks (Micro-Canopy Vegetation & Built-Up Infrastructure Extraction).
+    """
+    if not sample_id and not run_id:
+        raise HTTPException(status_code=400, detail="Provide either 'sample_id' or 'run_id'")
+
+    if run_id:
+        run_path = RUNS_DIR / f"{run_id}.npz"
+        if not run_path.exists():
+            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+        data = np.load(str(run_path))
+        sr_array = data["sr"].astype(np.float32)
+        lr_image = data["lr"].astype(np.float32)
+        hr_image = data["hr"].astype(np.float32) if data.get("has_hr", False) and data["hr"].size > 0 else None
+        scale_factor = int(data.get("scale_factor", 4))
+    else:
+        sample_tiles_dir = Path(__file__).parent.parent / "sample_tiles"
+        sample_path = sample_tiles_dir / f"{sample_id}.npz"
+        if not sample_path.exists():
+            raise HTTPException(status_code=404, detail="Sample tile not found")
+
+        lr_image, hr_image = load_sample_tile(str(sample_path))
+        model_meta = model_registry.get_metadata(model_id) or {}
+        scale_factor = model_meta.get("scale_factor", 4)
+
+        result = _execute_model_sr(model_id, lr_image, hr_image, scale_factor)
+        sr_array = result["_sr_array"]
+
+    bicubic_sr, _ = run_bicubic_baseline(lr_image, scale_factor=scale_factor)
+
+    tasks_config = {
+        "canopy_segmentation": {
+            "name": "Micro-Canopy Vegetation Segmentation",
+            "description": "Delineates agricultural plots and vegetation canopy using NDVI > 0.35",
+            "fn": segment_micro_canopy,
+            "color": (34, 197, 94),  # Emerald Green
+        },
+        "built_up_infrastructure": {
+            "name": "Built-up Infrastructure Extraction",
+            "description": "Extracts road networks and urban structures using high visible albedo & low contrast",
+            "fn": segment_built_up_infrastructure,
+            "color": (249, 115, 22),  # Amber Orange
+        },
+    }
+
+    tasks_res = {}
+    for task_key, tcfg in tasks_config.items():
+        seg_fn = tcfg["fn"]
+        color = tcfg["color"]
+
+        mask_bicubic = seg_fn(bicubic_sr)
+        mask_rcan = seg_fn(sr_array)
+        mask_gt = seg_fn(hr_image) if hr_image is not None else mask_bicubic
+
+        metrics_bicubic = compute_segmentation_metrics(mask_bicubic, mask_gt) if hr_image is not None else {
+            "f1": 1.0, "iou": 1.0, "precision": 1.0, "recall": 1.0
+        }
+        metrics_rcan = compute_segmentation_metrics(mask_rcan, mask_gt) if hr_image is not None else compute_segmentation_metrics(mask_rcan, mask_bicubic)
+
+        png_bicubic = mask_to_png_bytes(mask_bicubic, color)
+        png_rcan = mask_to_png_bytes(mask_rcan, color)
+        png_gt = mask_to_png_bytes(mask_gt, (59, 130, 246)) if hr_image is not None else b""
+
+        tasks_res[task_key] = DownstreamTaskItem(
+            task_name=tcfg["name"],
+            description=tcfg["description"],
+            bicubic=DownstreamTaskMetrics(**metrics_bicubic),
+            rcan=DownstreamTaskMetrics(**metrics_rcan),
+            ground_truth_pixel_count=int(mask_gt.sum()),
+            masks={
+                "bicubic": f"data:image/png;base64,{base64.b64encode(png_bicubic).decode('utf-8')}",
+                "rcan": f"data:image/png;base64,{base64.b64encode(png_rcan).decode('utf-8')}",
+                "ground_truth": f"data:image/png;base64,{base64.b64encode(png_gt).decode('utf-8')}" if png_gt else "",
+            }
+        )
+
+    return DownstreamMasksResponse(status="success", tasks=tasks_res)
 
 
 # ========================
@@ -757,17 +937,50 @@ async def list_jobs():
 
 @app.get("/api/export/geotiff")
 async def export_geotiff(
-    sample_id: str = Query(..., description="Sample ID to export"),
+    sample_id: Optional[str] = Query(None, description="Sample ID to export"),
+    run_id: Optional[str] = Query(None, description="Active run ID to export"),
     model_id: str = Query("rcan", description="Model to generate SR with"),
 ):
     """
     Generate and download an authoritative 4-band Float32 GeoTIFF.
+    Supports either pre-loaded sample_id or an active uploaded run_id.
     CRITICAL RULE:
     - If the source dataset lacks geospatial metadata, raises HTTP 400 stating
       'No geospatial reference available'. Never silently assigns EPSG:4326.
     - If georeferenced, preserves exact CRS, scales affine transform for 4x SR (p_out = p_in / 4),
       and sets band descriptions and metadata tags.
     """
+    if not sample_id and not run_id:
+        raise HTTPException(status_code=400, detail="Provide either 'sample_id' or 'run_id'")
+
+    if run_id:
+        run_path = RUNS_DIR / f"{run_id}.npz"
+        if not run_path.exists():
+            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+        data = np.load(str(run_path))
+        sr_array = data["sr"].astype(np.float32)
+        geo_json = str(data.get("geo_json", ""))
+        geo_metadata = json.loads(geo_json) if geo_json else None
+        scale_factor = int(data.get("scale_factor", 4))
+
+        if not geo_metadata or not geo_metadata.get("has_geo", False):
+            raise HTTPException(
+                status_code=400,
+                detail="No geospatial reference available for this run. Authoritative geospatial GeoTIFF export is disabled for non-georeferenced inputs."
+            )
+        try:
+            geotiff_bytes = export_geotiff_bytes(sr_array, geo_metadata=geo_metadata, scale_factor=scale_factor)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        return Response(
+            content=geotiff_bytes,
+            media_type="image/tiff",
+            headers={
+                "Content-Disposition": f"attachment; filename=bharatsr_{run_id}.tif"
+            },
+        )
+
     sample_tiles_dir = Path(__file__).parent.parent / "sample_tiles"
     sample_path = sample_tiles_dir / f"{sample_id}.npz"
     if not sample_path.exists():

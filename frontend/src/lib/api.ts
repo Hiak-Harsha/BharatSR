@@ -55,7 +55,8 @@ export interface PixelBandData {
 
 export interface PixelProfileResponse {
   status: string;
-  sample_id: string;
+  sample_id?: string;
+  run_id?: string;
   model_id: string;
   hr_coordinates: { x: number; y: number };
   lr_coordinates: { x: number; y: number };
@@ -72,6 +73,35 @@ export interface PixelProfileResponse {
   interpretation_disclaimer?: string;
 }
 
+export interface DownstreamTaskMetrics {
+  f1: number;
+  iou: number;
+  precision: number;
+  recall: number;
+}
+
+export interface DownstreamTaskItem {
+  task_name: string;
+  description: string;
+  bicubic: DownstreamTaskMetrics;
+  rcan: DownstreamTaskMetrics;
+  ground_truth_pixel_count: number;
+  masks: {
+    bicubic: string;
+    rcan: string;
+    ground_truth?: string;
+  };
+}
+
+export interface DownstreamMasksResponse {
+  status: string;
+  tasks: {
+    canopy_segmentation: DownstreamTaskItem;
+    built_up_infrastructure: DownstreamTaskItem;
+    [key: string]: DownstreamTaskItem;
+  };
+}
+
 
 export interface MetricItem {
   value: number | null;
@@ -83,6 +113,7 @@ export interface MetricItem {
 export interface SuperResolveResponse {
   status: string;
   model_id: string;
+  run_id?: string;
   inference_time_s: number;
   input: {
     shape: number[];
@@ -200,6 +231,7 @@ export interface ComparisonTableRow {
 
 export interface CompareResponse {
   status: string;
+  run_id?: string;
   input: {
     shape: number[];
     image: string;
@@ -218,36 +250,42 @@ export interface JobStatusResponse {
   job_id: string;
   status: "pending" | "processing" | "completed" | "failed";
   model_id: string;
+  progress_pct: number;
+  is_cancelled: boolean;
   created_at: string;
   completed_at?: string;
   inference_time_s?: number;
   error_message?: string;
-  result?: SuperResolveResponse;
+  result?: any;
 }
 
-export async function checkHealth(): Promise<{ status: string; models_loaded: number }> {
+export async function fetchHealth(): Promise<{ status: string; models_loaded: number; device: string; version: string; active_jobs: number }> {
   const res = await fetch(`${API_BASE}/api/health`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Health check failed: ${res.statusText}`);
+  if (!res.ok) throw new Error(`Backend offline: ${res.statusText}`);
   return res.json();
 }
 
-export async function getModels(): Promise<ModelInfo[]> {
+export async function fetchModels(): Promise<ModelInfo[]> {
   const res = await fetch(`${API_BASE}/api/models`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Failed to fetch models: ${res.statusText}`);
   const data = await res.json();
-  return data.models || [];
+  return data.models;
 }
 
-export async function getSamples(): Promise<SampleTile[]> {
+export async function fetchSamples(): Promise<SampleTile[]> {
   const res = await fetch(`${API_BASE}/api/samples`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Failed to fetch samples: ${res.statusText}`);
   const data = await res.json();
-  return data.samples || [];
+  return data.samples;
 }
+
+export const checkHealth = fetchHealth;
+export const getModels = fetchModels;
+export const getSamples = fetchSamples;
 
 export async function superresolveSample(
   sampleId: string,
-  modelId: string = "srcnn"
+  modelId: string = "rcan"
 ): Promise<SuperResolveResponse> {
   const formData = new FormData();
   formData.append("sample_id", sampleId);
@@ -268,7 +306,7 @@ export async function superresolveSample(
 
 export async function superresolveUpload(
   file: File,
-  modelId: string = "srcnn"
+  modelId: string = "rcan"
 ): Promise<SuperResolveResponse> {
   const formData = new FormData();
   formData.append("file", file);
@@ -281,7 +319,7 @@ export async function superresolveUpload(
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Super-resolution upload failed");
+    throw new Error(err.detail || "Super-resolution failed");
   }
 
   return res.json();
@@ -344,22 +382,30 @@ export async function getJobs(): Promise<any[]> {
   return data.jobs || [];
 }
 
-export function getGeoTIFFDownloadUrl(sampleId: string, modelId: string = "rcan"): string {
-  return `${API_BASE}/api/export/geotiff?sample_id=${encodeURIComponent(sampleId)}&model_id=${encodeURIComponent(modelId)}`;
+export function getGeoTIFFDownloadUrl(sampleId?: string, runId?: string, modelId: string = "rcan"): string {
+  if (runId) {
+    return `${API_BASE}/api/export/geotiff?run_id=${encodeURIComponent(runId)}&model_id=${encodeURIComponent(modelId)}`;
+  }
+  return `${API_BASE}/api/export/geotiff?sample_id=${encodeURIComponent(sampleId || "sample_real_s2")}&model_id=${encodeURIComponent(modelId)}`;
 }
 
-export function getReportDownloadUrl(sampleId: string, modelId: string = "rcan"): string {
-  return `${API_BASE}/api/export/report?sample_id=${encodeURIComponent(sampleId)}&model_id=${encodeURIComponent(modelId)}`;
+export function getReportDownloadUrl(sampleId?: string, modelId: string = "rcan"): string {
+  return `${API_BASE}/api/export/report?sample_id=${encodeURIComponent(sampleId || "sample_real_s2")}&model_id=${encodeURIComponent(modelId)}`;
 }
 
 export async function getPixelProfile(
-  sampleId: string,
+  sampleId?: string,
+  runId?: string,
   x: number = 128,
   y: number = 128,
   modelId: string = "rcan"
 ): Promise<PixelProfileResponse> {
   const formData = new FormData();
-  formData.append("sample_id", sampleId);
+  if (runId) {
+    formData.append("run_id", runId);
+  } else if (sampleId) {
+    formData.append("sample_id", sampleId);
+  }
   formData.append("x", x.toString());
   formData.append("y", y.toString());
   formData.append("model_id", modelId);
@@ -377,3 +423,28 @@ export async function getPixelProfile(
   return res.json();
 }
 
+export async function getDownstreamMasks(
+  sampleId?: string,
+  runId?: string,
+  modelId: string = "rcan"
+): Promise<DownstreamMasksResponse> {
+  const formData = new FormData();
+  if (runId) {
+    formData.append("run_id", runId);
+  } else if (sampleId) {
+    formData.append("sample_id", sampleId);
+  }
+  formData.append("model_id", modelId);
+
+  const res = await fetch(`${API_BASE}/api/downstream-masks`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Downstream task segmentation failed");
+  }
+
+  return res.json();
+}

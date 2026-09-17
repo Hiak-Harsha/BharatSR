@@ -104,7 +104,8 @@ class BandProfile(BaseModel):
 class PixelProfileResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
     status: str
-    sample_id: str
+    sample_id: Optional[str] = None
+    run_id: Optional[str] = None
     model_id: str
     hr_coordinates: Dict[str, int]
     lr_coordinates: Dict[str, int]
@@ -135,6 +136,7 @@ class SuperResolveResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
     status: str
     model_id: str
+    run_id: Optional[str] = None
     inference_time_s: float
     input: Dict[str, Any]
     output: Dict[str, Any]
@@ -144,6 +146,30 @@ class SuperResolveResponse(BaseModel):
     uncertainty: Optional[UncertaintyOutput] = None
     ground_truth: Optional[Dict[str, Any]] = None
     geospatial_metadata: Optional[Dict[str, Any]] = None
+
+
+class DownstreamTaskMetrics(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    f1: float
+    iou: float
+    precision: float
+    recall: float
+
+
+class DownstreamTaskItem(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    task_name: str
+    description: str
+    bicubic: DownstreamTaskMetrics
+    rcan: DownstreamTaskMetrics
+    ground_truth_pixel_count: int
+    masks: Dict[str, str]
+
+
+class DownstreamMasksResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    status: str
+    tasks: Dict[str, DownstreamTaskItem]
 
 
 class CompareResponse(BaseModel):
