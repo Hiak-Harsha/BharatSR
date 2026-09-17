@@ -29,9 +29,11 @@ backend/bharatsr.db
 backend/runs/
 *.db
 
-# Large Training Datasets (regenerated via python data/scripts/prepare_data.py --synthetic)
-data/processed/train.npz
-data/processed/val.npz
+# Large Training Datasets & Raw Satellite Archives
+data/raw/
+data/intermediate/
+data/processed/*.npz
+!data/processed/.gitkeep
 
 # IDE & OS Files
 .DS_Store

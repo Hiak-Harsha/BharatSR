@@ -25,6 +25,7 @@ export interface MultiSpectralViews {
   green?: string; // Band 3 (Green)
   blue?: string;  // Band 2 (Blue)
   nir?: string;   // Band 8 (NIR)
+  error?: string; // Absolute Error Map |SR - HR|
 }
 
 export interface SampleTile {
@@ -47,6 +48,7 @@ export interface PixelBandData {
   band: string;
   wavelength: string;
   lr_reflectance: number;
+  bicubic_reflectance?: number;
   sr_reflectance: number;
   hr_reflectance: number | null;
 }
@@ -61,10 +63,13 @@ export interface PixelProfileResponse {
   ndvi: {
     sr: number;
     lr: number;
+    bicubic?: number;
     hr: number | null;
   };
+  spectral_angle_deg?: number;
   surface_classification: string;
   signature_analysis: string;
+  interpretation_disclaimer?: string;
 }
 
 
@@ -84,21 +89,42 @@ export interface SuperResolveResponse {
     image: string; // base64 data URI
     views?: MultiSpectralViews;
   };
+  bicubic?: {
+    shape: number[];
+    image: string; // base64 data URI
+    views?: MultiSpectralViews;
+  };
   output: {
     shape: number[];
     image: string; // base64 data URI
     views?: MultiSpectralViews;
+  };
+  error_map?: {
+    image: string;
+    mean_error: number;
+    max_error: number;
   };
   ground_truth?: {
     shape: number[];
     image: string; // base64 data URI
     views?: MultiSpectralViews;
   };
+  geospatial_metadata?: any;
   metrics: {
     psnr: MetricItem;
     ssim: MetricItem;
     sam: MetricItem;
     downsample_consistency: MetricItem;
+    spectral_mae?: MetricItem;
+    gradient_similarity?: MetricItem;
+    hallucination_fidelity?: {
+      false_edge_rate: number;
+      missing_edge_rate: number;
+      high_freq_hallucination_rate: number;
+      correctness_score: number;
+      consistency_score: number;
+      synthesis_score: number;
+    };
     sr_stats?: {
       min: number;
       max: number;
@@ -114,6 +140,11 @@ export interface SuperResolveResponse {
       min_sigma: number;
       max_sigma: number;
       high_uncertainty_fraction: number;
+      calibration_status?: string;
+    };
+    scatter?: {
+      correlation: number;
+      points: Array<{ unc: number; err: number }>;
     };
   };
 }
@@ -129,6 +160,16 @@ export interface CompareModelResult {
     ssim: MetricItem;
     sam: MetricItem;
     downsample_consistency: MetricItem;
+    spectral_mae?: MetricItem;
+    gradient_similarity?: MetricItem;
+    hallucination_fidelity?: {
+      false_edge_rate: number;
+      missing_edge_rate: number;
+      high_freq_hallucination_rate: number;
+      correctness_score: number;
+      consistency_score: number;
+      synthesis_score: number;
+    };
   };
   uncertainty?: {
     image: string;
@@ -138,6 +179,11 @@ export interface CompareModelResult {
       min_sigma: number;
       max_sigma: number;
       high_uncertainty_fraction: number;
+      calibration_status?: string;
+    };
+    scatter?: {
+      correlation: number;
+      points: Array<{ unc: number; err: number }>;
     };
   };
 }

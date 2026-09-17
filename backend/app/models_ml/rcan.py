@@ -90,11 +90,13 @@ class RCAN(nn.Module):
         reduction: int = 8,
         scale: int = 4,
         predict_uncertainty: bool = True,
+        residual_learning: bool = True,
     ):
         super().__init__()
         self.n_bands = n_bands
         self.scale = scale
         self.predict_uncertainty = predict_uncertainty
+        self.residual_learning = residual_learning
 
         # 1. Shallow feature extraction
         self.head = nn.Conv2d(n_bands, n_feats, kernel_size=3, padding=1, bias=True)
@@ -110,10 +112,10 @@ class RCAN(nn.Module):
             nn.PixelShuffle(scale),
         )
 
-        # 4. Primary reconstruction head (SR Image)
+        # 4. Primary reconstruction head (Learned residual or direct reflectance)
         self.sr_head = nn.Conv2d(n_feats, n_bands, kernel_size=3, padding=1, bias=True)
 
-        # 5. Uncertainty head (predicts log-variance map)
+        # 5. Uncertainty head (predicts bounded log-variance map)
         if predict_uncertainty:
             self.uncertainty_head = nn.Sequential(
                 nn.Conv2d(n_feats, n_feats // 2, kernel_size=3, padding=1, bias=True),
@@ -136,20 +138,62 @@ class RCAN(nn.Module):
         feats_deep = self.body(feats_shallow) + feats_shallow
         feats_up = self.upsampler(feats_deep)
 
-        sr = self.sr_head(feats_up)
+        residual = self.sr_head(feats_up)
+
+        if self.residual_learning:
+            # Residual learning: bicubic(LR) anchor + learned high-frequency residual
+            x_up = F.interpolate(x, scale_factor=self.scale, mode="bicubic", align_corners=False)
+            sr = x_up + residual
+        else:
+            sr = residual
 
         if self.predict_uncertainty and self.uncertainty_head is not None:
             log_var = self.uncertainty_head(feats_up)
+            # Numerically clamp log_variance to prevent infinite uncertainty or collapsed precision
+            log_var = torch.clamp(log_var, -6.0, 6.0)
             return sr, log_var
 
         return sr
 
 
+def profile_model(model: nn.Module, input_size=(1, 4, 64, 64)) -> dict:
+    """Compute parameter count, latency, output range, and estimated FLOPs."""
+    import time
+    num_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    x = torch.randn(*input_size)
+    model.eval()
+    with torch.no_grad():
+        t0 = time.time()
+        out = model(x)
+        latency = (time.time() - t0) * 1000  # ms
+
+    sr = out[0] if isinstance(out, tuple) else out
+    # Approximate FLOPs for conv2d layers
+    flops = 0
+    for m in model.modules():
+        if isinstance(m, nn.Conv2d):
+            # FLOPs = 2 * C_in * C_out * K_h * K_w * H_out * W_out
+            h_out = input_size[2] * (model.scale if hasattr(model, "scale") else 1)
+            w_out = input_size[3] * (model.scale if hasattr(model, "scale") else 1)
+            flops += 2 * m.in_channels * m.out_channels * m.kernel_size[0] * m.kernel_size[1] * h_out * w_out
+
+    return {
+        "parameters": num_params,
+        "trainable_parameters": trainable_params,
+        "cpu_latency_ms": round(latency, 2),
+        "output_shape": list(sr.shape),
+        "estimated_mflops": round(flops / 1e6, 2),
+    }
+
+
 if __name__ == "__main__":
     # Smoke test
-    model = RCAN(n_bands=4, n_feats=36, n_resgroups=3, n_resblocks=3, scale=4, predict_uncertainty=True)
-    num_params = sum(p.numel() for p in model.parameters())
-    print(f"RCAN Satellite Model initialized: {num_params:,} parameters")
+    model = RCAN(n_bands=4, n_feats=36, n_resgroups=3, n_resblocks=3, scale=4, predict_uncertainty=True, residual_learning=True)
+    stats = profile_model(model)
+    print(f"RCAN Satellite Model initialized: {stats['parameters']:,} parameters")
+    print(f"Estimated MFLOPs: {stats['estimated_mflops']} MFLOPs | Latency: {stats['cpu_latency_ms']} ms")
 
     x = torch.randn(2, 4, 32, 32)
     sr, log_var = model(x)
@@ -158,4 +202,6 @@ if __name__ == "__main__":
     print(f"LogVar shape:      {log_var.shape} (Expected: [2, 1, 128, 128])")
     assert sr.shape == (2, 4, 128, 128)
     assert log_var.shape == (2, 1, 128, 128)
+    print("[PASS] RCAN architecture test passed.")
+
     print("RCAN architecture test PASSED [OK]")

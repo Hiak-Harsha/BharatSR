@@ -1,10 +1,13 @@
 """
-BharatSR — FastAPI Main Application (Phase 3)
+BharatSR — FastAPI Application Server
+Problem Statement SIH26142: Deep Learning Super-Resolution Mapping for Medium-Resolution Satellite Imagery
+Target: Sentinel-2 L2A (10m) -> 4x SR on 2.5m-equivalent grid (B2, B3, B4, B8)
 """
 
 import sys
 import base64
 from pathlib import Path
+from typing import Optional, Dict, Any, List, Tuple
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Response, Query
@@ -17,6 +20,14 @@ import json
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from backend.app.schemas import (
+    HealthResponse, ModelsListResponse, ModelInfo,
+    SamplesListResponse, SampleInfo,
+    SuperResolveResponse, CompareResponse,
+    PixelProfileResponse, BandProfile,
+    AsyncJobSubmitResponse, JobStatusResponse, JobListResponse,
+    ReportResponse
+)
 from backend.app.services.inference import model_registry, run_inference, run_bicubic_baseline
 from backend.app.services.preprocessing import (
     load_image_from_bytes, load_sample_tile, numpy_to_png_bytes,
@@ -31,12 +42,13 @@ from backend.app.models_ml.uncertainty import generate_uncertainty_heatmap, summ
 # APP LIFECYCLE
 # ========================
 
-job_store = None
+job_store: Optional[JobStore] = None
 RUNS_DIR = Path(__file__).parent.parent / "runs"
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Load models at startup, cleanup at shutdown."""
+    """Load models and initialize storage at startup."""
     global job_store
 
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
@@ -44,26 +56,28 @@ async def lifespan(app: FastAPI):
     # Initialize job store
     db_path = str(Path(__file__).parent.parent / "bharatsr.db")
     job_store = JobStore(db_path)
-    print("Job store initialized")
+    # Cleanup expired jobs (>24 hours old) on startup
+    deleted = job_store.cleanup_expired_jobs(max_age_hours=24, runs_dir=RUNS_DIR)
+    if deleted > 0:
+        print(f"Cleaned up {deleted} expired job records.")
 
     # Load available models
     weights_dir = Path(__file__).parent.parent / "weights"
     srcnn_path = weights_dir / "srcnn_best.pth"
-
     if srcnn_path.exists():
         model_registry.load_model("srcnn", str(srcnn_path))
     else:
-        print(f"WARNING: SRCNN checkpoint not found at {srcnn_path}")
-        print("Run training first: python training/train_srcnn.py")
+        print(f"INFO: SRCNN checkpoint not yet present at {srcnn_path}")
 
-    # Phase 5: Load RCAN if available
     rcan_path = weights_dir / "rcan_best.pth"
     if rcan_path.exists():
         model_registry.load_model("rcan", str(rcan_path))
+    else:
+        print(f"INFO: RCAN checkpoint not yet present at {rcan_path}")
 
-    print(f"Available models: {[m['id'] for m in model_registry.list_models()]}")
+    print(f"Available models in registry: {[m['id'] for m in model_registry.list_models()]}")
 
-    yield  # App runs
+    yield
 
     print("Shutting down BharatSR backend")
 
@@ -74,14 +88,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="BharatSR API",
-    description="Deep Learning Super-Resolution for Satellite Imagery",
+    description="Scientifically Defensible Deep Learning Super-Resolution for Satellite Earth Observation (SIH26142)",
     version="0.2.0",
     lifespan=lifespan,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -92,14 +106,40 @@ app.add_middleware(
 # HELPER FUNCTIONS
 # ========================
 
-def _load_input_data(sample_id: Optional[str], file_bytes: Optional[bytes]):
-    """Loads LR image and optional HR ground truth / geo metadata."""
+def _load_input_data(sample_id: Optional[str], file_bytes: Optional[bytes]) -> Tuple[np.ndarray, Optional[np.ndarray], Optional[Dict[str, Any]]]:
+    """
+    Loads LR image, optional HR ground truth, and legitimate geospatial metadata.
+    Never fabricates coordinates or CRS.
+    """
     if sample_id:
-        sample_path = Path(__file__).parent.parent / "sample_tiles" / f"{sample_id}.npz"
+        sample_tiles_dir = Path(__file__).parent.parent / "sample_tiles"
+        sample_path = sample_tiles_dir / f"{sample_id}.npz"
         if not sample_path.exists():
             raise HTTPException(status_code=404, detail=f"Sample '{sample_id}' not found")
         lr_image, hr_image = load_sample_tile(str(sample_path))
-        return lr_image, hr_image, None
+
+        # Check for genuine metadata sidecar
+        sidecar_path = sample_tiles_dir / f"{sample_id}.json"
+        geo_metadata = None
+        if sidecar_path.exists():
+            try:
+                with open(sidecar_path, "r") as f:
+                    sidecar = json.load(f)
+                    if sidecar.get("has_geo", False):
+                        geo_metadata = sidecar
+                    else:
+                        geo_metadata = {
+                            "has_geo": False,
+                            "message": "No geospatial reference available (Synthetic procedural benchmark)",
+                            "source_dataset": sidecar.get("source_dataset", "Synthetic"),
+                        }
+            except Exception:
+                geo_metadata = {"has_geo": False, "message": "No geospatial reference available"}
+        else:
+            geo_metadata = {"has_geo": False, "message": "No geospatial reference available"}
+
+        return lr_image, hr_image, geo_metadata
+
     elif file_bytes:
         try:
             lr_image, geo_metadata = load_image_from_bytes(file_bytes)
@@ -110,7 +150,7 @@ def _load_input_data(sample_id: Optional[str], file_bytes: Optional[bytes]):
         raise HTTPException(status_code=400, detail="Provide either 'file' or 'sample_id'")
 
 
-def _execute_model_sr(model_id: str, lr_image: np.ndarray, hr_image: Optional[np.ndarray], scale_factor: int = 4):
+def _execute_model_sr(model_id: str, lr_image: np.ndarray, hr_image: Optional[np.ndarray], scale_factor: int = 4) -> Dict[str, Any]:
     """Executes a single model inference and returns formatted results."""
     uncertainty_dict = None
 
@@ -120,7 +160,7 @@ def _execute_model_sr(model_id: str, lr_image: np.ndarray, hr_image: Optional[np
     else:
         model = model_registry.get_model(model_id)
         if model is None:
-            raise HTTPException(status_code=400, detail=f"Model '{model_id}' not loaded.")
+            raise HTTPException(status_code=400, detail=f"Model '{model_id}' not loaded or checkpoint missing.")
         sr_image, latency, uncertainty_map = run_inference(
             model, lr_image, scale_factor, model_registry.device
         )
@@ -135,6 +175,18 @@ def _execute_model_sr(model_id: str, lr_image: np.ndarray, hr_image: Optional[np
     views = generate_multi_spectral_views(sr_image)
     sr_b64 = views.get("rgb", "")
 
+    error_dict = None
+    if hr_image is not None:
+        error_map = np.mean(np.abs(sr_image.astype(np.float32) - hr_image.astype(np.float32)), axis=0)
+        err_bytes = generate_uncertainty_heatmap(error_map, colormap="plasma")
+        err_b64 = f"data:image/png;base64,{base64.b64encode(err_bytes).decode('utf-8')}"
+        views["error"] = err_b64
+        error_dict = {
+            "image": err_b64,
+            "mean_error": round(float(np.mean(error_map)), 5),
+            "max_error": round(float(np.max(error_map)), 5),
+        }
+
     if uncertainty_map is not None:
         u_bytes = generate_uncertainty_heatmap(uncertainty_map, colormap="magma")
         u_b64 = base64.b64encode(u_bytes).decode("utf-8")
@@ -142,6 +194,24 @@ def _execute_model_sr(model_id: str, lr_image: np.ndarray, hr_image: Optional[np
             "image": f"data:image/png;base64,{u_b64}",
             "summary": summarize_uncertainty(uncertainty_map),
         }
+
+        if hr_image is not None and error_dict is not None:
+            u_map = uncertainty_map[0] if uncertainty_map.ndim == 3 else uncertainty_map
+            h_s, w_s = error_map.shape
+            sy = max(1, h_s // 8)
+            sx = max(1, w_s // 8)
+            u_sub = u_map[::sy, ::sx].flatten().astype(float)
+            e_sub = error_map[::sy, ::sx].flatten().astype(float)
+            n_pts = min(len(u_sub), len(e_sub), 64)
+            scatter_points = [
+                {"unc": round(float(u_sub[i]), 4), "err": round(float(e_sub[i]), 4)}
+                for i in range(n_pts)
+            ]
+            corr_val = float(np.corrcoef(u_sub[:n_pts], e_sub[:n_pts])[0, 1]) if n_pts > 2 else 0.0
+            uncertainty_dict["scatter"] = {
+                "correlation": round(corr_val if not np.isnan(corr_val) else 0.0, 4),
+                "points": scatter_points,
+            }
 
     return {
         "model_id": model_id,
@@ -151,21 +221,39 @@ def _execute_model_sr(model_id: str, lr_image: np.ndarray, hr_image: Optional[np
         "views": views,
         "metrics": metrics,
         "uncertainty": uncertainty_dict,
+        "error_map": error_dict,
         "_sr_array": sr_image,
     }
 
 
 def _async_worker(job_id: str, sample_id: Optional[str], file_bytes: Optional[bytes], model_id: str):
-    """Background task for async processing."""
+    """Background task for async processing with progress and cancellation checks."""
     try:
-        job_store.update_job(job_id, status="processing")
+        assert job_store is not None
+        job_store.update_job(job_id, status="processing", progress_pct=10)
+
+        if job_store.is_job_cancelled(job_id):
+            return
+
         lr_image, hr_image, geo_metadata = _load_input_data(sample_id, file_bytes)
+        job_store.update_progress(job_id, 35)
+
+        if job_store.is_job_cancelled(job_id):
+            return
 
         model_meta = model_registry.get_metadata(model_id) or {}
         scale_factor = model_meta.get("scale_factor", 4)
 
         result = _execute_model_sr(model_id, lr_image, hr_image, scale_factor)
         sr_array = result.pop("_sr_array")
+        job_store.update_progress(job_id, 80)
+
+        if job_store.is_job_cancelled(job_id):
+            return
+
+        # Attach geospatial metadata if present
+        if geo_metadata:
+            result["geospatial_metadata"] = geo_metadata
 
         # Save result payload to disk
         payload_path = RUNS_DIR / f"{job_id}.json"
@@ -182,66 +270,50 @@ def _async_worker(job_id: str, sample_id: Optional[str], file_bytes: Optional[by
             result_path=str(payload_path),
             metrics=result["metrics"],
             inference_time=result["inference_time_s"],
+            progress_pct=100
         )
     except Exception as e:
-        job_store.update_job(job_id, status="failed", error=str(e))
+        if job_store:
+            job_store.update_job(job_id, status="failed", error=str(e), progress_pct=0)
 
 
 # ========================
 # ENDPOINTS
 # ========================
 
-@app.get("/api/health")
+@app.get("/api/health", response_model=HealthResponse)
 async def health():
-    """Health check endpoint."""
-    return {
-        "status": "ok",
-        "models_loaded": len(model_registry.list_models()),
-    }
+    """Health check endpoint confirming API status, loaded models, and device."""
+    active_count = 0
+    if job_store:
+        try:
+            recent = job_store.list_jobs(limit=10)
+            active_count = sum(1 for j in recent if j.get("status") in ("pending", "processing"))
+        except Exception:
+            pass
+
+    return HealthResponse(
+        status="ok",
+        models_loaded=len(model_registry.list_models()),
+        device=str(model_registry.device),
+        version="0.2.0",
+        active_jobs=active_count,
+    )
 
 
-@app.get("/api/models")
+@app.get("/api/models", response_model=ModelsListResponse)
 async def list_models():
-    """List available super-resolution models."""
+    """List available super-resolution models with parameter count and capabilities."""
     models = model_registry.list_models()
-    return {"models": models}
+    return ModelsListResponse(models=[ModelInfo(**m) for m in models])
 
 
-SAMPLE_METADATA = {
-    "sample_0": {
-        "title": "Delhi Agro-Urban Corridor",
-        "region": "Northern Plains, India",
-        "description": "Urban fringe with active crop fields, field boundaries, and small structures.",
-        "tactical_category": "Micro-Land-Cover & Perimeter Surveillance",
-        "coordinates": "28.6139° N, 77.2090° E",
-    },
-    "sample_1": {
-        "title": "Jodhpur Desert Outskirts",
-        "region": "Thar Desert, Rajasthan",
-        "description": "High-albedo arid soil, rural road network, and sparse scrub vegetation.",
-        "tactical_category": "Border Reconnaissance & Route Mapping",
-        "coordinates": "26.2389° N, 73.0243° E",
-    },
-    "sample_2": {
-        "title": "Dehradun Forest Foothills",
-        "region": "Himalayan Foothills, Uttarakhand",
-        "description": "Dense mixed forest canopy with terrain shadows and micro-drainage channels.",
-        "tactical_category": "Forestry Vigor & Terrain Assessment",
-        "coordinates": "30.3165° N, 78.0322° E",
-    },
-    "sample_3": {
-        "title": "Visakhapatnam Coastal Sector",
-        "region": "Eastern Littoral, Andhra Pradesh",
-        "description": "Water-land interface, coastal wetlands, and maritime infrastructure.",
-        "tactical_category": "Coastal & Critical Infrastructure Security",
-        "coordinates": "17.6868° N, 83.2185° E",
-    },
-}
-
-
-@app.get("/api/samples")
+@app.get("/api/samples", response_model=SamplesListResponse)
 async def list_samples():
-    """List pre-loaded sample tiles with geographic and tactical intelligence metadata."""
+    """
+    List pre-loaded sample tiles with honest geographic and provenance metadata.
+    Never fabricates coordinates or real city names for synthetic procedural samples.
+    """
     sample_dir = Path(__file__).parent.parent / "sample_tiles"
     samples = []
 
@@ -251,45 +323,64 @@ async def list_samples():
                 data = np.load(str(f))
                 lr = data["lr"]
                 views = generate_multi_spectral_views(lr)
-                meta = SAMPLE_METADATA.get(f.stem, {
-                    "title": f.stem.replace("_", " ").title(),
-                    "region": "Satellite Test Scene",
-                    "description": "Calibrated 4-band Sentinel-2 earth observation tile.",
-                    "tactical_category": "General Surveillance",
-                    "coordinates": "India Regional Observation",
-                })
 
-                samples.append({
-                    "id": f.stem,
-                    "filename": f.name,
-                    "title": meta["title"],
-                    "region": meta["region"],
-                    "description": meta["description"],
-                    "tactical_category": meta["tactical_category"],
-                    "coordinates": meta["coordinates"],
-                    "bands": int(lr.shape[0]),
-                    "lr_size": f"{lr.shape[1]}x{lr.shape[2]}",
-                    "has_ground_truth": "hr" in data.files,
-                    "thumbnail": views.get("rgb", ""),
-                    "views": views,
-                })
+                # Check sidecar json
+                sidecar_file = sample_dir / f"{f.stem}.json"
+                sidecar = {}
+                if sidecar_file.exists():
+                    try:
+                        with open(sidecar_file, "r") as sf:
+                            sidecar = json.load(sf)
+                    except Exception:
+                        pass
+
+                has_geo = sidecar.get("has_geo", False)
+                crs = sidecar.get("crs", None)
+                sensor = sidecar.get("sensor", "Sentinel-2 MSI (B2, B3, B4, B8)")
+                title = sidecar.get("title", f.stem.replace("_", " ").title())
+                source_dataset = sidecar.get("source_dataset", "Synthetic Procedural Reference")
+                desc = sidecar.get("description", f"4-band satellite verification tile ({source_dataset}).")
+                tactical_cat = sidecar.get("tactical_category", "Micro-Grid Super-Resolution Verification")
+
+                coord_str = f"CRS: {crs}" if has_geo and crs else "No geospatial reference (Synthetic benchmark)"
+
+                samples.append(SampleInfo(
+                    id=f.stem,
+                    filename=f.name,
+                    title=title,
+                    region=source_dataset,
+                    description=desc,
+                    tactical_category=tactical_cat,
+                    coordinates=coord_str,
+                    bands=int(lr.shape[0]),
+                    lr_size=f"{lr.shape[1]}x{lr.shape[2]}",
+                    has_ground_truth="hr" in data.files,
+                    has_geo=has_geo,
+                    crs=crs,
+                    sensor=sensor,
+                    thumbnail=views.get("rgb", ""),
+                    views=views,
+                ))
             except Exception as e:
-                print(f"Error loading sample {f}: {e}")
+                print(f"Error loading sample tile {f}: {e}")
 
-    return {"samples": samples}
-
+    return SamplesListResponse(samples=samples)
 
 
 @app.post("/api/superresolve")
 async def superresolve(
     file: UploadFile = File(None),
     sample_id: str = Form(None),
-    model_id: str = Form("srcnn"),
+    model_id: str = Form("rcan"),
 ):
     """
-    Run super-resolution on an uploaded image or sample tile.
-    Returns SR result as base64 PNG, multi-spectral views, and physical metrics.
+    Run super-resolution on an uploaded GeoTIFF or pre-loaded sample tile.
+    Returns 4x SR result as base64 PNG, multi-spectral views, physical metrics,
+    and predicted uncertainty map.
     """
+    if model_id not in ("bicubic", "srcnn", "rcan"):
+        raise HTTPException(status_code=400, detail=f"Invalid model_id '{model_id}'. Allowed: bicubic, srcnn, rcan")
+
     file_bytes = await file.read() if file else None
     lr_image, hr_image, geo_metadata = _load_input_data(sample_id, file_bytes)
 
@@ -298,6 +389,14 @@ async def superresolve(
 
     result = _execute_model_sr(model_id, lr_image, hr_image, scale_factor)
     result.pop("_sr_array")
+
+    # Generate bicubic baseline views for 4-view Evidence Mode
+    bicubic_sr, _ = run_bicubic_baseline(lr_image, scale_factor=scale_factor)
+    bic_views = generate_multi_spectral_views(bicubic_sr)
+    if hr_image is not None:
+        bic_err = np.mean(np.abs(bicubic_sr.astype(np.float32) - hr_image.astype(np.float32)), axis=0)
+        bic_err_bytes = generate_uncertainty_heatmap(bic_err, colormap="plasma")
+        bic_views["error"] = f"data:image/png;base64,{base64.b64encode(bic_err_bytes).decode('utf-8')}"
 
     input_views = generate_multi_spectral_views(lr_image)
 
@@ -310,6 +409,11 @@ async def superresolve(
             "image": input_views.get("rgb", ""),
             "views": input_views,
         },
+        "bicubic": {
+            "shape": list(bicubic_sr.shape),
+            "image": bic_views.get("rgb", ""),
+            "views": bic_views,
+        },
         "output": {
             "shape": result["shape"],
             "image": result["image"],
@@ -317,6 +421,9 @@ async def superresolve(
         },
         "metrics": result["metrics"],
     }
+
+    if result.get("error_map") is not None:
+        response["error_map"] = result["error_map"]
 
     if result["uncertainty"] is not None:
         response["uncertainty"] = result["uncertainty"]
@@ -329,6 +436,9 @@ async def superresolve(
             "views": gt_views,
         }
 
+    if geo_metadata:
+        response["geospatial_metadata"] = geo_metadata
+
     return JSONResponse(content=response)
 
 
@@ -338,8 +448,9 @@ async def compare(
     sample_id: str = Form(None),
 ):
     """
-    Benchmark Bicubic Baseline vs SRCNN vs RCAN side-by-side.
-    Computes comparative metrics, latency, and multi-spectral representations.
+    Rigorous multi-model benchmark: Bicubic Baseline vs SRCNN vs RCAN side-by-side.
+    Computes comparative metrics (PSNR, SSIM, SAM, Consistency MAE, Spectral MAE),
+    inference latency, and multi-spectral representations on exactly the same scene.
     """
     file_bytes = await file.read() if file else None
     lr_image, hr_image, geo_metadata = _load_input_data(sample_id, file_bytes)
@@ -366,6 +477,9 @@ async def compare(
         ("ssim", "SSIM (Structural Similarity)", "", True),
         ("sam", "SAM (Spectral Angle Mapper)", "°", False),
         ("downsample_consistency", "Downsample Consistency", "MAE", False),
+        ("spectral_mae", "Mean Absolute Spectral Error", "", False),
+        ("correctness_score", "Correctness Score", "", True),
+        ("hallucination_rate", "Hallucination Rate", "", False),
     ]
 
     for key, label, unit, higher_is_better in metric_keys:
@@ -420,10 +534,13 @@ async def compare(
             "views": gt_views,
         }
 
+    if geo_metadata:
+        response["geospatial_metadata"] = geo_metadata
+
     return JSONResponse(content=response)
 
 
-@app.post("/api/pixel-profile")
+@app.post("/api/pixel-profile", response_model=PixelProfileResponse)
 async def pixel_profile(
     sample_id: str = Form(...),
     x: int = Form(128),
@@ -432,9 +549,11 @@ async def pixel_profile(
 ):
     """
     Extract multi-band spectral reflectance profile at coordinate (x, y).
-    Compares LR, SR, and HR ground truth curves.
+    Compares LR, SR, and HR ground truth curves across B2, B3, B4, B8.
+    Calculates exact spectral angle and provides rule-based spectral interpretation.
     """
-    sample_path = Path(__file__).parent.parent / "sample_tiles" / f"{sample_id}.npz"
+    sample_tiles_dir = Path(__file__).parent.parent / "sample_tiles"
+    sample_path = sample_tiles_dir / f"{sample_id}.npz"
     if not sample_path.exists():
         raise HTTPException(status_code=404, detail="Sample tile not found")
 
@@ -445,7 +564,6 @@ async def pixel_profile(
     result = _execute_model_sr(model_id, lr_image, hr_image, scale_factor)
     sr_array = result["_sr_array"]
 
-    # Clamp coordinates to HR dimensions
     c, h_hr, w_hr = sr_array.shape
     x = max(0, min(int(x), w_hr - 1))
     y = max(0, min(int(y), h_hr - 1))
@@ -454,8 +572,10 @@ async def pixel_profile(
     x_lr = max(0, min(x // scale_factor, lr_image.shape[2] - 1))
     y_lr = max(0, min(y // scale_factor, lr_image.shape[1] - 1))
 
+    # Compute bicubic baseline for pixel inspector comparison
+    bicubic_arr, _ = run_bicubic_baseline(lr_image, scale_factor=scale_factor)
+
     # Bands ordering: Red=0, Green=1, Blue=2, NIR=3
-    # Standard spectral order by wavelength: Blue (490nm), Green (560nm), Red (665nm), NIR (842nm)
     spectral_order = [
         {"name": "Blue", "band": "B2", "wavelength_nm": 490, "idx": 2},
         {"name": "Green", "band": "B3", "wavelength_nm": 560, "idx": 1},
@@ -464,33 +584,55 @@ async def pixel_profile(
     ]
 
     bands_data = []
+    sr_vec = []
+    hr_vec = []
     for b in spectral_order:
         idx = b["idx"]
         sr_val = float(sr_array[idx, y, x]) if idx < c else 0.0
         lr_val = float(lr_image[idx, y_lr, x_lr]) if idx < lr_image.shape[0] else 0.0
+        bic_val = float(bicubic_arr[idx, y, x]) if idx < bicubic_arr.shape[0] else 0.0
         hr_val = float(hr_image[idx, y, x]) if (hr_image is not None and idx < hr_image.shape[0]) else None
 
-        bands_data.append({
-            "name": b["name"],
-            "band": b["band"],
-            "wavelength": f"{b['wavelength_nm']} nm",
-            "lr_reflectance": round(lr_val, 4),
-            "sr_reflectance": round(sr_val, 4),
-            "hr_reflectance": round(hr_val, 4) if hr_val is not None else None,
-        })
+        sr_vec.append(sr_val)
+        if hr_val is not None:
+            hr_vec.append(hr_val)
+
+        bands_data.append(BandProfile(
+            name=b["name"],
+            band=b["band"],
+            wavelength=f"{b['wavelength_nm']} nm",
+            lr_reflectance=round(lr_val, 4),
+            bicubic_reflectance=round(bic_val, 4),
+            sr_reflectance=round(sr_val, 4),
+            hr_reflectance=round(hr_val, 4) if hr_val is not None else None,
+        ))
+
+    # Compute pointwise spectral angle if HR is available
+    spectral_angle = None
+    if len(hr_vec) == len(sr_vec):
+        v_sr = np.array(sr_vec, dtype=np.float64)
+        v_hr = np.array(hr_vec, dtype=np.float64)
+        norm_sr = np.linalg.norm(v_sr)
+        norm_hr = np.linalg.norm(v_hr)
+        if norm_sr > 1e-6 and norm_hr > 1e-6:
+            cos_theta = np.dot(v_sr, v_hr) / (norm_sr * norm_hr)
+            cos_theta = np.clip(cos_theta, -1.0, 1.0)
+            spectral_angle = round(float(np.degrees(np.arccos(cos_theta))), 2)
 
     # Pointwise NDVI = (NIR - Red) / (NIR + Red)
     red_sr, nir_sr = float(sr_array[0, y, x]), float(sr_array[3, y, x])
     red_lr, nir_lr = float(lr_image[0, y_lr, x_lr]), float(lr_image[3, y_lr, x_lr])
+    red_bic, nir_bic = float(bicubic_arr[0, y, x]), float(bicubic_arr[3, y, x])
 
     ndvi_sr = (nir_sr - red_sr) / (nir_sr + red_sr + 1e-7)
     ndvi_lr = (nir_lr - red_lr) / (nir_lr + red_lr + 1e-7)
+    ndvi_bic = (nir_bic - red_bic) / (nir_bic + red_bic + 1e-7)
     ndvi_hr = None
     if hr_image is not None:
         red_hr, nir_hr = float(hr_image[0, y, x]), float(hr_image[3, y, x])
         ndvi_hr = (nir_hr - red_hr) / (nir_hr + red_hr + 1e-7)
 
-    # Classification interpretation based on NDVI and NIR
+    # Rule-based spectral interpretation (clearly disclaimed, not ground truth)
     if ndvi_sr > 0.4:
         surface_type = "Dense Vegetation / Crop Canopy"
         signature_note = "Steep red edge with high NIR cellular scattering plateau."
@@ -504,29 +646,31 @@ async def pixel_profile(
         surface_type = "Built-up Urban / High-Albedo Road/Sand"
         signature_note = "Relatively flat visible-to-NIR reflectance curve."
 
-    return {
-        "status": "success",
-        "sample_id": sample_id,
-        "model_id": model_id,
-        "hr_coordinates": {"x": x, "y": y},
-        "lr_coordinates": {"x": x_lr, "y": y_lr},
-        "bands_data": bands_data,
-        "ndvi": {
+    return PixelProfileResponse(
+        status="success",
+        sample_id=sample_id,
+        model_id=model_id,
+        hr_coordinates={"x": x, "y": y},
+        lr_coordinates={"x": x_lr, "y": y_lr},
+        bands_data=bands_data,
+        ndvi={
             "sr": round(ndvi_sr, 4),
             "lr": round(ndvi_lr, 4),
+            "bicubic": round(ndvi_bic, 4),
             "hr": round(ndvi_hr, 4) if ndvi_hr is not None else None,
         },
-        "surface_classification": surface_type,
-        "signature_analysis": signature_note,
-    }
-
+        spectral_angle_deg=spectral_angle,
+        surface_classification=surface_type,
+        signature_analysis=signature_note,
+        interpretation_disclaimer="Rule-based spectral interpretation (heuristic, not ground truth)",
+    )
 
 
 # ========================
 # ASYNC JOB ENDPOINTS
 # ========================
 
-@app.post("/api/superresolve/async")
+@app.post("/api/superresolve/async", response_model=AsyncJobSubmitResponse)
 async def superresolve_async(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(None),
@@ -534,60 +678,77 @@ async def superresolve_async(
     model_id: str = Form("rcan"),
 ):
     """
-    Submit super-resolution as an asynchronous background job.
+    Submit super-resolution as an asynchronous background task.
     Returns job_id and status checking URL.
     """
+    if model_id not in ("bicubic", "srcnn", "rcan"):
+        raise HTTPException(status_code=400, detail=f"Invalid model_id '{model_id}'")
+
     file_bytes = await file.read() if file else None
     if not sample_id and not file_bytes:
         raise HTTPException(status_code=400, detail="Provide 'file' or 'sample_id'")
 
+    assert job_store is not None
     job_id = job_store.create_job(model_id=model_id)
     background_tasks.add_task(_async_worker, job_id, sample_id, file_bytes, model_id)
 
-    return {
-        "status": "accepted",
-        "job_id": job_id,
-        "model_id": model_id,
-        "status_url": f"/api/jobs/{job_id}",
-    }
+    return AsyncJobSubmitResponse(
+        status="accepted",
+        job_id=job_id,
+        model_id=model_id,
+        status_url=f"/api/jobs/{job_id}",
+    )
 
 
-@app.get("/api/jobs/{job_id}")
+@app.get("/api/jobs/{job_id}", response_model=JobStatusResponse)
 async def get_job_status(job_id: str):
-    """Check asynchronous job status or retrieve results."""
+    """Check asynchronous job status, progress percentage, or retrieve final results."""
+    assert job_store is not None
     job = job_store.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
 
-    response = {
+    response_data = {
         "job_id": job["job_id"],
         "status": job["status"],
         "model_id": job["model_id"],
+        "progress_pct": job.get("progress_pct", 0),
+        "is_cancelled": bool(job.get("is_cancelled", 0)),
         "created_at": job["created_at"],
         "completed_at": job.get("completed_at"),
         "inference_time_s": job.get("inference_time_s"),
         "error_message": job.get("error_message"),
+        "result": None,
     }
 
     if job["status"] == "completed" and job.get("result_path"):
         result_file = Path(job["result_path"])
         if result_file.exists():
-            with open(result_file, "r") as f:
-                response["result"] = json.load(f)
+            try:
+                with open(result_file, "r") as f:
+                    response_data["result"] = json.load(f)
+            except Exception as e:
+                response_data["error_message"] = f"Failed to load cached result: {e}"
 
-    return response
+    return JobStatusResponse(**response_data)
 
 
-@app.get("/api/jobs")
+@app.post("/api/jobs/{job_id}/cancel")
+async def cancel_job(job_id: str):
+    """Cancel a running or pending asynchronous job."""
+    assert job_store is not None
+    success = job_store.cancel_job(job_id)
+    if not success:
+        raise HTTPException(status_code=400, detail=f"Job '{job_id}' cannot be cancelled (either not found or already completed/failed).")
+    return {"status": "success", "message": f"Job '{job_id}' cancellation requested."}
+
+
+@app.get("/api/jobs", response_model=JobListResponse)
 async def list_jobs():
-    """List recent background jobs."""
-    import sqlite3
-    db_path = str(Path(__file__).parent.parent / "bharatsr.db")
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    rows = conn.execute("SELECT job_id, status, model_id, created_at, completed_at, inference_time_s FROM jobs ORDER BY created_at DESC LIMIT 20").fetchall()
-    conn.close()
-    return {"jobs": [dict(r) for r in rows]}
+    """List recent background processing jobs."""
+    assert job_store is not None
+    jobs = job_store.list_jobs(limit=20)
+    return JobListResponse(jobs=jobs)
 
 
 # ========================
@@ -600,20 +761,36 @@ async def export_geotiff(
     model_id: str = Query("rcan", description="Model to generate SR with"),
 ):
     """
-    Generate and download a calibrated 4-band float32 GeoTIFF.
+    Generate and download an authoritative 4-band Float32 GeoTIFF.
+    CRITICAL RULE:
+    - If the source dataset lacks geospatial metadata, raises HTTP 400 stating
+      'No geospatial reference available'. Never silently assigns EPSG:4326.
+    - If georeferenced, preserves exact CRS, scales affine transform for 4x SR (p_out = p_in / 4),
+      and sets band descriptions and metadata tags.
     """
-    sample_path = Path(__file__).parent.parent / "sample_tiles" / f"{sample_id}.npz"
+    sample_tiles_dir = Path(__file__).parent.parent / "sample_tiles"
+    sample_path = sample_tiles_dir / f"{sample_id}.npz"
     if not sample_path.exists():
         raise HTTPException(status_code=404, detail="Sample tile not found")
 
-    lr_image, hr_image = load_sample_tile(str(sample_path))
+    lr_image, hr_image, geo_metadata = _load_input_data(sample_id, None)
+
+    if not geo_metadata or not geo_metadata.get("has_geo", False):
+        raise HTTPException(
+            status_code=400,
+            detail="No geospatial reference available for this dataset. Authoritative geospatial GeoTIFF export is disabled for non-georeferenced synthetic benchmarks."
+        )
+
     model_meta = model_registry.get_metadata(model_id) or {}
     scale_factor = model_meta.get("scale_factor", 4)
 
     result = _execute_model_sr(model_id, lr_image, hr_image, scale_factor)
     sr_array = result["_sr_array"]
 
-    geotiff_bytes = export_geotiff_bytes(sr_array)
+    try:
+        geotiff_bytes = export_geotiff_bytes(sr_array, geo_metadata=geo_metadata, scale_factor=scale_factor)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     return Response(
         content=geotiff_bytes,
@@ -631,12 +808,14 @@ async def export_report(
 ):
     """
     Generate an analytical verification report JSON for SIH evaluation.
+    Reports scientifically defensible metrics without fabricated claims.
     """
-    sample_path = Path(__file__).parent.parent / "sample_tiles" / f"{sample_id}.npz"
+    sample_tiles_dir = Path(__file__).parent.parent / "sample_tiles"
+    sample_path = sample_tiles_dir / f"{sample_id}.npz"
     if not sample_path.exists():
         raise HTTPException(status_code=404, detail="Sample tile not found")
 
-    lr_image, hr_image = load_sample_tile(str(sample_path))
+    lr_image, hr_image, geo_metadata = _load_input_data(sample_id, None)
     model_meta = model_registry.get_metadata(model_id) or {}
     scale_factor = model_meta.get("scale_factor", 4)
 
@@ -648,16 +827,18 @@ async def export_report(
         "target_organization": "National Technical Research Organisation (NTRO)",
         "sample_id": sample_id,
         "model_id": model_id,
-        "scale_factor": f"{scale_factor}x (10m -> 2.5m GSD)",
+        "scale_factor": f"{scale_factor}x (10m -> 2.5m-equivalent output grid)",
         "input_dimension": list(lr_image.shape),
         "output_dimension": result["shape"],
         "latency_seconds": result["inference_time_s"],
         "metrics": result["metrics"],
-        "uncertainty_summary": result["uncertainty"]["summary"] if result["uncertainty"] else None,
+        "uncertainty_summary": result["uncertainty"]["summary"] if result.get("uncertainty") else None,
+        "geospatial_metadata": geo_metadata,
         "spectral_integrity_compliance": {
             "physical_reflectance_preserved": True,
-            "sam_under_5_deg": (result["metrics"].get("sam", {}).get("value", 99) < 5.0) if hr_image is not None else None,
+            "sam_evaluation_target_met": (result["metrics"].get("sam", {}).get("value", 99) < 5.0) if hr_image is not None else None,
             "downsample_consistency_mae": result["metrics"].get("downsample_consistency", {}).get("value"),
+            "target_note": "Internal evaluation target: SAM < 5.0° (not an NTRO mandated threshold).",
         },
     }
 
@@ -667,4 +848,3 @@ async def export_report(
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("backend.app.main:app", host="0.0.0.0", port=8000, reload=True)
-

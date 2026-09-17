@@ -28,27 +28,45 @@ def load_image_from_bytes(file_bytes: bytes, expected_bands: int = 4) -> np.ndar
                 img = dataset.read().astype(np.float32)  # (C, H, W)
                 crs = dataset.crs
                 transform = dataset.transform
+                bounds = dataset.bounds
+                res = dataset.res if hasattr(dataset, "res") else (None, None)
+                nodata = dataset.nodata
+                descriptions = [dataset.descriptions[i] or f"Band_{i+1}" for i in range(dataset.count)] if dataset.descriptions else []
+                tags = dict(dataset.tags())
 
-                # Normalize to reflectance [0, ~1]
-                if img.max() > 10:
-                    img = img / 10000.0  # Sentinel-2 L2A DN values
+                has_geo = bool(crs is not None and transform is not None)
+
+                # Product-aware reflectance normalization:
+                # Sentinel-2 L2A BOA values are typically scaled by 10000 (DN 10000 = 1.0 reflectance)
+                if img.max() > 10.0:
+                    img = img / 10000.0
                 elif img.max() > 1.5:
-                    img = img / 255.0  # 8-bit values
+                    img = img / 255.0  # 8-bit imagery
 
-                # Only clip negatives, NOT values > 1.0
-                img = np.clip(img, 0, None)
+                # Filter invalid / negative values, but preserve bright targets > 1.0 (clouds/snow)
+                img = np.clip(img, 0.0, None)
 
-                # Select bands
+                # Select bands (expected 4: B2, B3, B4, B8)
                 if img.shape[0] > expected_bands:
                     img = img[:expected_bands]
                 elif img.shape[0] < expected_bands:
-                    # Pad with zeros for missing bands (e.g., NIR)
-                    pad = np.zeros((expected_bands - img.shape[0],
-                                   img.shape[1], img.shape[2]),
-                                  dtype=np.float32)
+                    pad = np.zeros((expected_bands - img.shape[0], img.shape[1], img.shape[2]), dtype=np.float32)
                     img = np.concatenate([img, pad], axis=0)
 
-                return img, {"crs": str(crs), "transform": list(transform)}
+                geo_meta = {
+                    "has_geo": has_geo,
+                    "crs": str(crs) if crs else None,
+                    "transform": list(transform) if transform else None,
+                    "width": dataset.width,
+                    "height": dataset.height,
+                    "bounds": [bounds.left, bounds.bottom, bounds.right, bounds.top] if bounds else None,
+                    "pixel_size": [float(res[0]), float(res[1])] if res[0] is not None else None,
+                    "nodata": float(nodata) if nodata is not None else None,
+                    "descriptions": descriptions,
+                    "tags": tags,
+                    "message": "Geospatially referenced" if has_geo else "No geospatial reference available",
+                }
+                return img, geo_meta
     except Exception:
         pass
 
@@ -186,27 +204,46 @@ def generate_multi_spectral_views(img: np.ndarray) -> dict:
     return views
 
 
-def export_geotiff_bytes(img: np.ndarray, geo_metadata: dict = None) -> bytes:
+def export_geotiff_bytes(img: np.ndarray, geo_metadata: dict = None, scale_factor: int = 4) -> bytes:
     """
     Export multi-band reflectance numpy array (C, H, W) to GeoTIFF bytes.
-    Preserves exact float32 physical reflectance values.
+    Preserves exact float32 physical reflectance values and geospatial metadata.
+
+    CRITICAL RULES:
+    - Never fabricate coordinates or CRS (no EPSG:4326 Delhi fallbacks).
+    - If no geospatial metadata exists, raises ValueError stating 'No geospatial reference available'.
+    - For 4x SR: output pixel size = input pixel size / scale_factor; affine transform is scaled accordingly.
     """
     import rasterio
     from rasterio.io import MemoryFile
-    from rasterio.transform import from_origin
+    from rasterio.transform import Affine
+
+    if not geo_metadata or not geo_metadata.get("has_geo", False):
+        raise ValueError("No geospatial reference available. Authoritative GeoTIFF export requires georeferenced raster metadata.")
+
+    crs_str = geo_metadata.get("crs")
+    if not crs_str or crs_str == "None":
+        raise ValueError("No geospatial reference available (missing CRS).")
+
+    raw_transform = geo_metadata.get("transform")
+    if not raw_transform or len(raw_transform) < 6:
+        raise ValueError("No geospatial reference available (missing affine transform).")
+
+    # Recalculate affine transform for SR:
+    # Input pixel size = p -> Output pixel size = p / scale_factor
+    # Affine(a, b, c, d, e, f): a (dx) and e (dy) are pixel resolutions; c and f are origin coordinates.
+    in_affine = Affine(*raw_transform[:6])
+    out_affine = Affine(
+        in_affine.a / scale_factor,
+        in_affine.b / scale_factor,
+        in_affine.c,
+        in_affine.d / scale_factor,
+        in_affine.e / scale_factor,
+        in_affine.f,
+    )
 
     c, h, w = img.shape
-    crs_str = "EPSG:4326"
-    transform = from_origin(77.2090, 28.6139, 0.000025, 0.000025)
-
-    if geo_metadata:
-        if geo_metadata.get("crs"):
-            crs_str = geo_metadata["crs"]
-        if geo_metadata.get("transform"):
-            try:
-                transform = rasterio.Affine(*geo_metadata["transform"])
-            except Exception:
-                pass
+    nodata_val = geo_metadata.get("nodata", None)
 
     with MemoryFile() as memfile:
         with memfile.open(
@@ -216,9 +253,22 @@ def export_geotiff_bytes(img: np.ndarray, geo_metadata: dict = None) -> bytes:
             count=c,
             dtype=np.float32,
             crs=crs_str,
-            transform=transform,
+            transform=out_affine,
+            nodata=nodata_val,
         ) as dataset:
             for b in range(c):
                 dataset.write(img[b].astype(np.float32), b + 1)
+
+            band_names = ["B2 - Blue (490nm)", "B3 - Green (560nm)", "B4 - Red (665nm)", "B8 - NIR (842nm)"]
+            for b in range(min(c, len(band_names))):
+                dataset.set_band_description(b + 1, band_names[b])
+
+            dataset.update_tags(
+                sensor="Sentinel-2 MSI",
+                processing=f"BharatSR {scale_factor}x Super-Resolution",
+                gsd=f"{abs(out_affine.a):.2f}m-equivalent output grid",
+                spectral_bands="B2, B3, B4, B8 (Selected 4-band subset of Sentinel-2)",
+            )
         return bytes(memfile.getbuffer())
+
 

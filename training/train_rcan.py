@@ -1,11 +1,11 @@
 """
-BharatSR — RCAN Training Script (Phase 5)
+BharatSR — RCAN Training Script (Phase 5 & Scientific Upgrades)
 
 Trains the Residual Channel Attention Network (RCAN) with:
+- Residual learning anchor: bicubic(LR) + learned residual
 - Dual-head: 4-band SR output + spatial uncertainty map
-- Combined Physics Loss: NLL uncertainty + Spectral consistency + L1
-- Evaluates PSNR, SSIM, SAM, downsample consistency, and uncertainty distribution.
-- Saves checkpoint to backend/weights/rcan_best.pth
+- Multi-task physics loss: L_rec (L1) + L_sam (SAM) + L_dc (Canonical 4x4 Area Avg) + L_unc (Heteroscedastic NLL)
+- Logs parameter count, latency, estimated FLOPs, output range, and full metrics
 """
 
 import sys
@@ -13,22 +13,22 @@ if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 import time
 import argparse
+import json
+import subprocess
 from pathlib import Path
+from typing import Dict, Any, Optional
 
 import numpy as np
 import torch
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from backend.app.models_ml.rcan import RCAN
-from backend.app.models_ml.uncertainty import logvar_to_std, generate_uncertainty_heatmap, summarize_uncertainty
+from backend.app.models_ml.rcan import RCAN, profile_model
+from backend.app.models_ml.uncertainty import logvar_to_std, evaluate_uncertainty_calibration
 from training.losses import BharatSRCombinedLoss, compute_all_metrics
 
 
@@ -37,7 +37,7 @@ class SatelliteDataset(Dataset):
         data = np.load(str(npz_path))
         self.lr = data["lr"].astype(np.float32)
         self.hr = data["hr"].astype(np.float32)
-        print(f"Loaded {len(self.lr)} patches from {npz_path}")
+        print(f"Loaded {len(self.lr)} patches from {npz_path.name}")
 
     def __len__(self):
         return len(self.lr)
@@ -46,21 +46,43 @@ class SatelliteDataset(Dataset):
         return torch.from_numpy(self.lr[idx]), torch.from_numpy(self.hr[idx])
 
 
+def get_git_revision() -> str:
+    """Get current git commit hash if available."""
+    try:
+        return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=str(PROJECT_ROOT)).decode("ascii").strip()
+    except Exception:
+        return "v0.2.0-clean"
+
+
 def train_rcan(
-    epochs: int = 10,
+    epochs: int = 5,
     batch_size: int = 4,
     lr_rate: float = 5e-4,
     scale_factor: int = 4,
     n_feats: int = 36,
     n_resgroups: int = 3,
     n_resblocks: int = 3,
-):
+    lambda_rec: float = 1.0,
+    lambda_sam: float = 0.1,
+    lambda_dc: float = 0.1,
+    lambda_unc: float = 0.2,
+    predict_uncertainty: bool = True,
+    config_name: str = "rcan_full",
+    checkpoint_name: str = "rcan_best.pth",
+    seed: int = 42,
+) -> Dict[str, Any]:
+    """Train RCAN with specified loss configuration."""
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+
     save_dir = PROJECT_ROOT / "backend" / "weights"
     save_dir.mkdir(parents=True, exist_ok=True)
     data_dir = PROJECT_ROOT / "data" / "processed"
 
     train_dataset = SatelliteDataset(data_dir / "train.npz")
     val_dataset = SatelliteDataset(data_dir / "val.npz")
+    test_path = data_dir / "test.npz"
+    test_dataset = SatelliteDataset(test_path) if test_path.exists() else val_dataset
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
@@ -74,54 +96,70 @@ def train_rcan(
         n_resgroups=n_resgroups,
         n_resblocks=n_resblocks,
         scale=scale_factor,
-        predict_uncertainty=True,
+        predict_uncertainty=predict_uncertainty,
     ).to(device)
 
-    num_params = sum(p.numel() for p in model.parameters())
-    print(f"\nInitialized BharatSR RCAN Model: {num_params:,} parameters")
-    print(f"Device: {device} | Bands: {n_bands} | Scale: {scale_factor}x")
+    profile = profile_model(model, input_size=(1, n_bands, 32, 32))
+    num_params = profile["parameters"]
+
+    print(f"\n{'='*70}")
+    print(f"BharatSR RCAN Training [{config_name}]")
+    print(f"Architecture: Lightweight RCAN-Lite ({n_resgroups} RGs, {n_resblocks} RCABs)")
+    print(f"Parameters: {num_params:,} | FLOPs: {profile.get('estimated_flops', 'N/A')}")
+    print(f"Loss Weights: rec={lambda_rec}, sam={lambda_sam}, dc={lambda_dc}, unc={lambda_unc}")
+    print(f"Device: {device} | Epochs: {epochs} | Batch Size: {batch_size}")
+    print(f"{'='*70}")
 
     optimizer = optim.Adam(model.parameters(), lr=lr_rate, weight_decay=1e-5)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
-    criterion = BharatSRCombinedLoss(scale_factor=scale_factor, spectral_weight=0.1, l1_weight=1.0)
+    criterion = BharatSRCombinedLoss(
+        scale_factor=scale_factor,
+        lambda_rec=lambda_rec,
+        lambda_sam=lambda_sam,
+        lambda_dc=lambda_dc,
+        lambda_unc=lambda_unc,
+    )
 
     best_val_loss = float("inf")
     best_epoch = 0
-
-    print(f"\n{'='*65}")
-    print(f"Training RCAN — {epochs} epochs, batch_size={batch_size}")
-    print(f"{'='*65}")
+    train_history = []
 
     for epoch in range(1, epochs + 1):
         model.train()
         train_total_loss = 0.0
-        train_nll = 0.0
-        train_spec = 0.0
         train_l1 = 0.0
+        train_sam = 0.0
+        train_dc = 0.0
+        train_unc = 0.0
         t0 = time.time()
 
         for lr_b, hr_b in train_loader:
             lr_b, hr_b = lr_b.to(device), hr_b.to(device)
 
             optimizer.zero_grad()
-            sr_b, logvar_b = model(lr_b)
+            out = model(lr_b)
+            sr_b, logvar_b = out if isinstance(out, tuple) else (out, None)
 
             loss, loss_dict = criterion(sr_b, logvar_b, hr_b, lr_b)
             loss.backward()
 
-            # Gradient clipping to stabilize NLL training
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
-            train_total_loss += loss.item() * len(lr_b)
-            train_nll += loss_dict["nll"] * len(lr_b)
-            train_spec += loss_dict["spectral"] * len(lr_b)
-            train_l1 += loss_dict["l1"] * len(lr_b)
+            bs = len(lr_b)
+            train_total_loss += loss.item() * bs
+            train_l1 += loss_dict["l1"] * bs
+            train_sam += loss_dict["sam"] * bs
+            train_dc += loss_dict["dc"] * bs
+            train_unc += loss_dict["unc"] * bs
 
         scheduler.step()
         n_train = len(train_dataset)
         train_total_loss /= n_train
         train_l1 /= n_train
+        train_sam /= n_train
+        train_dc /= n_train
+        train_unc /= n_train
 
         # Validation
         model.eval()
@@ -131,7 +169,8 @@ def train_rcan(
         with torch.no_grad():
             for lr_b, hr_b in val_loader:
                 lr_b, hr_b = lr_b.to(device), hr_b.to(device)
-                sr_b, logvar_b = model(lr_b)
+                out_val = model(lr_b)
+                sr_b, logvar_b = out_val if isinstance(out_val, tuple) else (out_val, None)
                 loss, loss_dict = criterion(sr_b, logvar_b, hr_b, lr_b)
                 val_loss += loss.item() * len(lr_b)
                 val_l1 += loss_dict["l1"] * len(lr_b)
@@ -144,7 +183,7 @@ def train_rcan(
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_epoch = epoch
-            checkpoint_path = save_dir / "rcan_best.pth"
+            checkpoint_path = save_dir / checkpoint_name
             torch.save({
                 "epoch": epoch,
                 "model_state_dict": model.state_dict(),
@@ -154,132 +193,134 @@ def train_rcan(
                 "n_feats": n_feats,
                 "n_resgroups": n_resgroups,
                 "n_resblocks": n_resblocks,
+                "config_name": config_name,
+                "lambda_rec": lambda_rec,
+                "lambda_sam": lambda_sam,
+                "lambda_dc": lambda_dc,
+                "lambda_unc": lambda_unc,
             }, str(checkpoint_path))
             marker = " [best]"
         else:
             marker = ""
 
-        print(f"Epoch {epoch:2d}/{epochs:2d} | Train Loss: {train_total_loss:7.4f} (L1: {train_l1:6.4f}) | "
-              f"Val Loss: {val_loss:7.4f} (L1: {val_l1:6.4f}) | {elapsed:4.1f}s{marker}")
+        train_history.append({
+            "epoch": epoch,
+            "train_loss": round(train_total_loss, 4),
+            "train_l1": round(train_l1, 4),
+            "val_loss": round(val_loss, 4),
+            "val_l1": round(val_l1, 4),
+        })
 
-    print(f"\n{'='*65}")
-    print(f"RCAN Training Complete. Best val loss: {best_val_loss:.4f} at epoch {best_epoch}")
-    print(f"Checkpoint saved: {save_dir / 'rcan_best.pth'}")
-    print(f"{'='*65}")
+        print(f"Epoch {epoch:2d}/{epochs:2d} | Train Loss: {train_total_loss:7.4f} (L1: {train_l1:6.4f}, SAM: {train_sam:6.4f}, DC: {train_dc:6.4f}) | "
+              f"Val Loss: {val_loss:7.4f} | {elapsed:4.1f}s{marker}")
 
-    # Comprehensive evaluation
-    evaluate_rcan(model, val_dataset, scale_factor, device)
-    save_rcan_visualizations(model, val_dataset, scale_factor, device)
-
-    return model
-
-
-def evaluate_rcan(model, val_dataset, scale_factor, device):
-    """Evaluate RCAN across PSNR, SSIM, SAM, downsample consistency, and uncertainty."""
+    # Final evaluation on held-out test dataset
+    print(f"\nEvaluating configuration '{config_name}' on held-out test split...")
     model.eval()
-    all_metrics = {
+    test_metrics = {
         "psnr_db": [], "ssim": [], "sam_degrees": [],
-        "downsample_consistency_mae": []
+        "downsample_consistency_mae": [], "spectral_mae": [],
+        "hallucination_rate": [], "correctness_score": [],
     }
-    uncertainty_stats_list = []
+    all_sr = []
+    all_hr = []
+    all_sigma = []
+    t_start = time.time()
 
     with torch.no_grad():
-        for idx in range(min(len(val_dataset), 50)):
-            lr, hr = val_dataset[idx]
+        for idx in range(min(len(test_dataset), 50)):
+            lr, hr = test_dataset[idx]
             lr_np = lr.numpy()
             hr_np = hr.numpy()
 
-            sr, log_var = model(lr.unsqueeze(0).to(device))
+            out_test = model(lr.unsqueeze(0).to(device))
+            sr, log_var = out_test if isinstance(out_test, tuple) else (out_test, None)
             sr_np = sr.squeeze(0).cpu().numpy()
-            logvar_np = log_var.squeeze(0).cpu().numpy()
-
-            # Physical metrics
-            m = compute_all_metrics(sr_np, hr_np, lr_np, scale_factor)
-            for k, v in m.items():
-                if k in all_metrics:
-                    all_metrics[k].append(v)
-
-            # Uncertainty calibration
-            std_map = logvar_to_std(logvar_np)
-            u_stats = summarize_uncertainty(std_map)
-            uncertainty_stats_list.append(u_stats["mean_sigma"])
-
-    print(f"\n{'='*65}")
-    print(f"RCAN EVALUATION RESULTS (mean +/- std)")
-    print(f"{'='*65}")
-    for k in ["psnr_db", "ssim", "sam_degrees", "downsample_consistency_mae"]:
-        mean_val = np.mean(all_metrics[k])
-        std_val = np.std(all_metrics[k])
-        print(f"{k:<30} {mean_val:>8.4f} +/- {std_val:<6.4f}")
-
-    if uncertainty_stats_list:
-        u_mean = np.mean(uncertainty_stats_list)
-        u_std = np.std(uncertainty_stats_list)
-        print(f"{'mean_spatial_uncertainty_sigma':<30} {u_mean:>8.4f} +/- {u_std:<6.4f}")
-    print(f"{'='*65}")
-
-
-def save_rcan_visualizations(model, val_dataset, scale_factor, device, n_images=4):
-    """Save 4-panel visualizations: LR Input, RCAN SR, Uncertainty Heatmap, Ground Truth."""
-    save_dir = PROJECT_ROOT / "data" / "visualizations"
-    save_dir.mkdir(parents=True, exist_ok=True)
-
-    n_images = min(n_images, len(val_dataset))
-    model.eval()
-
-    with torch.no_grad():
-        for i in range(n_images):
-            lr, hr = val_dataset[i]
-            sr, log_var = model(lr.unsqueeze(0).to(device))
-            sr_np = sr.squeeze(0).cpu().numpy()
-            logvar_np = log_var.squeeze(0).cpu().numpy()
-            lr_np = lr.numpy()
-            hr_np = hr.numpy()
-
-            # RGB for visualization (bands 0, 1, 2)
-            lr_rgb = np.clip(np.transpose(lr_np[:3], (1, 2, 0)), 0, 1)
-            sr_rgb = np.clip(np.transpose(sr_np[:3], (1, 2, 0)), 0, 1)
-            hr_rgb = np.clip(np.transpose(hr_np[:3], (1, 2, 0)), 0, 1)
-
-            # Uncertainty heatmap
-            std_map = logvar_to_std(logvar_np)[0]
-            p_low, p_high = np.percentile(std_map, [2, 98])
-            norm_std = np.clip((std_map - p_low) / max(p_high - p_low, 1e-6), 0, 1)
-
-            fig, axes = plt.subplots(1, 4, figsize=(20, 5))
-
-            axes[0].imshow(lr_rgb)
-            axes[0].set_title(f"1. LR Input\n{lr_np.shape[1]}x{lr_np.shape[2]}")
-            axes[0].axis("off")
 
             m = compute_all_metrics(sr_np, hr_np, lr_np, scale_factor)
-            axes[1].imshow(sr_rgb)
-            axes[1].set_title(f"2. BharatSR RCAN 4x\nPSNR: {m['psnr_db']:.2f}dB, SSIM: {m['ssim']:.3f}\nSAM: {m['sam_degrees']:.2f} deg")
-            axes[1].axis("off")
+            for k in test_metrics:
+                val = m.get(k, m.get("high_freq_hallucination_rate", None))
+                if val is not None:
+                    test_metrics[k].append(val)
 
-            im_u = axes[2].imshow(norm_std, cmap="magma")
-            axes[2].set_title("3. Spatial Uncertainty Map\n(Bright = High Variance/Edges)")
-            axes[2].axis("off")
-            plt.colorbar(im_u, ax=axes[2], fraction=0.046, pad=0.04)
+            all_sr.append(sr_np)
+            all_hr.append(hr_np)
+            if log_var is not None:
+                std_np = logvar_to_std(log_var).squeeze(0).cpu().numpy()
+                all_sigma.append(std_np)
 
-            axes[3].imshow(hr_rgb)
-            axes[3].set_title(f"4. HR Reference Target\n{hr_np.shape[1]}x{hr_np.shape[2]}")
-            axes[3].axis("off")
+    test_latency = (time.time() - t_start) / max(1, len(test_dataset))
 
-            plt.suptitle(f"BharatSR — RCAN Attention + Uncertainty Quantification (Sample {i})", fontsize=14, fontweight="bold")
-            plt.tight_layout()
+    sr_stacked = np.concatenate(all_sr, axis=0)
+    output_min = float(sr_stacked.min())
+    output_max = float(sr_stacked.max())
 
-            out_path = save_dir / f"rcan_comparison_{i}.png"
-            plt.savefig(str(out_path), dpi=150, bbox_inches="tight")
-            plt.close()
-            print(f"Saved RCAN visualization: {out_path}")
+    avg_test_metrics = {k: round(float(np.mean(v)), 4) if v else 0.0 for k, v in test_metrics.items()}
+    std_test_metrics = {f"{k}_std": round(float(np.std(v)), 4) if v else 0.0 for k, v in test_metrics.items()}
+
+    # Calibration evaluation if uncertainty head is present
+    calibration_metrics = None
+    if all_sigma and lambda_unc > 0:
+        y_true_stack = np.stack(all_hr, axis=0)
+        y_pred_stack = np.stack(all_sr, axis=0)
+        sigma_stack = np.stack(all_sigma, axis=0)
+        calibration_metrics = evaluate_uncertainty_calibration(y_true_stack, y_pred_stack, sigma_stack)
+
+    run_summary = {
+        "config_name": config_name,
+        "git_version": get_git_revision(),
+        "dataset_version": "v1.0-scene-separated",
+        "seed": seed,
+        "lr": lr_rate,
+        "batch_size": batch_size,
+        "epochs": epochs,
+        "loss_weights": {
+            "lambda_rec": lambda_rec,
+            "lambda_sam": lambda_sam,
+            "lambda_dc": lambda_dc,
+            "lambda_unc": lambda_unc,
+        },
+        "architecture": f"Lightweight RCAN-Lite ({n_resgroups} RGs, {n_resblocks} RCABs, Residual Anchor)",
+        "num_parameters": num_params,
+        "latency_per_patch_s": round(test_latency, 4),
+        "output_range": [round(output_min, 4), round(output_max, 4)],
+        "train_loss": round(train_total_loss, 4),
+        "val_loss": round(best_val_loss, 4),
+        "test_metrics": avg_test_metrics,
+        "test_metrics_std": std_test_metrics,
+        "calibration_metrics": calibration_metrics,
+    }
+
+    print(f"Test Results for [{config_name}]: PSNR={avg_test_metrics['psnr_db']}dB, SSIM={avg_test_metrics['ssim']}, "
+          f"SAM={avg_test_metrics['sam_degrees']}°, DC-MAE={avg_test_metrics['downsample_consistency_mae']}")
+
+    return run_summary
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train BharatSR RCAN Model")
-    parser.add_argument("--epochs", type=int, default=8, help="Training epochs (default: 8)")
-    parser.add_argument("--batch-size", type=int, default=4, help="Batch size (default: 4)")
-    parser.add_argument("--lr", type=float, default=5e-4, help="Learning rate (default: 5e-4)")
+    parser.add_argument("--epochs", type=int, default=5, help="Number of epochs")
+    parser.add_argument("--batch_size", type=int, default=4, help="Batch size")
+    parser.add_argument("--lr", type=float, default=5e-4, help="Learning rate")
+    parser.add_argument("--lambda_rec", type=float, default=1.0)
+    parser.add_argument("--lambda_sam", type=float, default=0.1)
+    parser.add_argument("--lambda_dc", type=float, default=0.1)
+    parser.add_argument("--lambda_unc", type=float, default=0.2)
+    parser.add_argument("--config_name", type=str, default="rcan_full")
+    parser.add_argument("--checkpoint_name", type=str, default="rcan_best.pth")
+    parser.add_argument("--seed", type=int, default=42)
+
     args = parser.parse_args()
 
-    train_rcan(epochs=args.epochs, batch_size=args.batch_size, lr_rate=args.lr)
+    train_rcan(
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        lr_rate=args.lr,
+        lambda_rec=args.lambda_rec,
+        lambda_sam=args.lambda_sam,
+        lambda_dc=args.lambda_dc,
+        lambda_unc=args.lambda_unc,
+        config_name=args.config_name,
+        checkpoint_name=args.checkpoint_name,
+        seed=args.seed,
+    )

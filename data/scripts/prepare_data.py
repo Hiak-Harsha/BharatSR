@@ -25,7 +25,15 @@ SAMPLE_TILES_DIR = PROJECT_ROOT / "backend" / "sample_tiles"
 
 
 def try_load_opensr(dataset_name: str):
-    """Attempt to load an opensr-test dataset. Returns None if unavailable."""
+    """Attempt to load an opensr-test dataset. Returns None if unavailable or offline."""
+    import socket
+    try:
+        # Check connectivity first before blocking on HuggingFace download
+        socket.create_connection(("8.8.8.8", 53), timeout=1.0)
+    except OSError:
+        print("Offline mode detected. Skipping remote opensr-test download.")
+        return None
+
     try:
         import opensr_test
         print(f"Loading opensr-test dataset: {dataset_name}...")
@@ -245,38 +253,45 @@ def augment_patch(lr_patch, hr_patch):
     return augmented
 
 
-def split_by_scene(scenes, val_ratio=0.2):
+def split_by_scene(scenes, val_ratio=0.15, test_ratio=0.15, seed=42):
     """
-    Split scenes into train/val by SCENE index, not by patch.
-    This prevents data leakage between adjacent patches of the same scene.
+    Split scenes into train/val/test by SCENE index, not by patch.
+    This strictly prevents data leakage between adjacent patches of the same scene.
     """
     n = len(scenes)
     n_val = max(1, int(n * val_ratio))
+    n_test = max(1, int(n * test_ratio))
 
     # Deterministic shuffle
     indices = list(range(n))
-    np.random.seed(42)
+    np.random.seed(seed)
     np.random.shuffle(indices)
 
     val_indices = set(indices[:n_val])
-    train_scenes = [s for i, s in enumerate(scenes) if i not in val_indices]
+    test_indices = set(indices[n_val:n_val + n_test])
+
+    train_scenes = [s for i, s in enumerate(scenes) if i not in val_indices and i not in test_indices]
     val_scenes = [s for i, s in enumerate(scenes) if i in val_indices]
+    test_scenes = [s for i, s in enumerate(scenes) if i in test_indices]
 
-    return train_scenes, val_scenes
+    return train_scenes, val_scenes, test_scenes
 
 
-def prepare_dataset(lr_patch_size=64, scale=4, augment=True, force_synthetic=False):
+def prepare_dataset(lr_patch_size=64, scale=4, augment=True, force_synthetic=False, seed=42):
     """
     Main data preparation pipeline.
-    Returns paths to saved train/val .npz files.
+    Returns paths to saved train, val, and test .npz files.
     """
+    import json
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     SAMPLE_TILES_DIR.mkdir(parents=True, exist_ok=True)
+    METADATA_DIR = PROJECT_ROOT / "data" / "metadata"
+    METADATA_DIR.mkdir(parents=True, exist_ok=True)
 
     all_scenes = []
 
     if not force_synthetic:
-        # Try loading real data
+        # Try loading real paired data
         for dataset_name in ["spot", "naip"]:
             dataset = try_load_opensr(dataset_name)
             if dataset is not None:
@@ -287,36 +302,53 @@ def prepare_dataset(lr_patch_size=64, scale=4, augment=True, force_synthetic=Fal
     # Fallback to synthetic if no real data available
     if len(all_scenes) == 0:
         print("\n*** Using synthetic fallback data ***")
-        print("*** Install opensr-test for real satellite data ***\n")
+        print("*** Non-georeferenced procedural patterns ***\n")
         all_scenes = generate_synthetic_pairs(
-            n_scenes=20, lr_size=lr_patch_size, scale=scale
+            n_scenes=24, lr_size=lr_patch_size, scale=scale
         )
-        # Synthetic scenes are already patches, no tiling needed
         is_synthetic = True
     else:
         is_synthetic = False
 
     print(f"\nTotal scenes: {len(all_scenes)}")
 
-    # Split by scene
-    train_scenes, val_scenes = split_by_scene(all_scenes)
-    print(f"Train scenes: {len(train_scenes)}, Val scenes: {len(val_scenes)}")
+    # Split by scene into train, val, and held-out test
+    train_scenes, val_scenes, test_scenes = split_by_scene(all_scenes, val_ratio=0.15, test_ratio=0.15, seed=seed)
+    print(f"Train scenes: {len(train_scenes)}, Val scenes: {len(val_scenes)}, Test scenes: {len(test_scenes)}")
+
+    # Save metadata sidecars for all scenes
+    for s in all_scenes:
+        sid = f"scene_{s['scene_id']}"
+        meta = {
+            "scene_id": sid,
+            "is_synthetic": is_synthetic,
+            "source_dataset": s.get("dataset", "Procedural Synthetic Pattern"),
+            "sensor": "Sentinel-2 MSI 10m bands (B2, B3, B4, B8) simulation" if is_synthetic else "Sentinel-2 MSI",
+            "scale_factor": scale,
+            "lr_shape": list(s["lr"].shape),
+            "hr_shape": list(s["hr"].shape),
+            "reflectance_range": [float(s["lr"].min()), float(s["lr"].max())],
+        }
+        with open(METADATA_DIR / f"{sid}.json", "w") as f:
+            json.dump(meta, f, indent=2)
 
     # Tile and collect patches
     train_lr, train_hr = [], []
     val_lr, val_hr = [], []
+    test_lr, test_hr = [], []
 
-    for split_name, scenes, lr_list, hr_list in [
+    splits = [
         ("train", train_scenes, train_lr, train_hr),
         ("val", val_scenes, val_lr, val_hr),
-    ]:
+        ("test", test_scenes, test_lr, test_hr),
+    ]
+
+    for split_name, scenes, lr_list, hr_list in splits:
         for scene in scenes:
             if is_synthetic:
-                # Synthetic scenes are already patch-sized
                 patches = [(scene["lr"], scene["hr"])]
             else:
-                patches = tile_scene(scene["lr"], scene["hr"],
-                                     lr_patch_size=lr_patch_size, scale=scale)
+                patches = tile_scene(scene["lr"], scene["hr"], lr_patch_size=lr_patch_size, scale=scale)
 
             for lr_p, hr_p in patches:
                 if augment and split_name == "train":
@@ -328,56 +360,35 @@ def prepare_dataset(lr_patch_size=64, scale=4, augment=True, force_synthetic=Fal
                     lr_list.append(lr_p)
                     hr_list.append(hr_p)
 
-    if len(train_lr) == 0:
-        print("ERROR: No training patches generated!")
-        sys.exit(1)
-
     train_lr = np.array(train_lr, dtype=np.float32)
     train_hr = np.array(train_hr, dtype=np.float32)
     val_lr = np.array(val_lr, dtype=np.float32)
     val_hr = np.array(val_hr, dtype=np.float32)
+    test_lr = np.array(test_lr, dtype=np.float32)
+    test_hr = np.array(test_hr, dtype=np.float32)
 
     # Save
     train_path = DATA_DIR / "train.npz"
     val_path = DATA_DIR / "val.npz"
+    test_path = DATA_DIR / "test.npz"
 
     np.savez_compressed(str(train_path), lr=train_lr, hr=train_hr)
     np.savez_compressed(str(val_path), lr=val_lr, hr=val_hr)
+    np.savez_compressed(str(test_path), lr=test_lr, hr=test_hr)
 
-    # Save a few sample tiles for the demo
-    n_samples = min(4, len(val_lr))
-    for i in range(n_samples):
-        sample_path = SAMPLE_TILES_DIR / f"sample_{i}.npz"
-        np.savez_compressed(str(sample_path),
-                            lr=val_lr[i], hr=val_hr[i],
-                            sample_id=i)
-
-    # Print sanity check
+    # Print summary
     print(f"\n{'='*60}")
-    print(f"SANITY CHECK")
+    print(f"DATASET PREPARATION COMPLETED (Seed: {seed})")
     print(f"{'='*60}")
-    print(f"Train LR shape: {train_lr.shape}  (N, C, H, W)")
-    print(f"Train HR shape: {train_hr.shape}")
-    print(f"Val LR shape:   {val_lr.shape}")
-    print(f"Val HR shape:   {val_hr.shape}")
-    print(f"LR value range: [{train_lr.min():.4f}, {train_lr.max():.4f}]")
-    print(f"HR value range: [{train_hr.min():.4f}, {train_hr.max():.4f}]")
-    print(f"LR dtype: {train_lr.dtype}")
-    print(f"HR dtype: {train_hr.dtype}")
-    print(f"Scale factor: {train_hr.shape[-1] / train_lr.shape[-1]:.1f}x")
-    print(f"Bands: {train_lr.shape[1]}")
-
-    if train_lr.max() > 1.0 or train_hr.max() > 1.0:
-        print(f"\nNOTE: Values > 1.0 detected — this is expected for bright")
-        print(f"      targets (clouds, snow, specular water). NOT clipped.")
-
-    print(f"\nSaved to:")
-    print(f"  Train: {train_path} ({train_path.stat().st_size / 1e6:.1f} MB)")
-    print(f"  Val:   {val_path} ({val_path.stat().st_size / 1e6:.1f} MB)")
-    print(f"  Samples: {SAMPLE_TILES_DIR} ({n_samples} tiles)")
+    print(f"Train: {len(train_lr)} patches  ({train_path.stat().st_size / 1e6:.1f} MB)")
+    print(f"Val:   {len(val_lr)} patches  ({val_path.stat().st_size / 1e6:.1f} MB)")
+    print(f"Test:  {len(test_lr)} patches  ({test_path.stat().st_size / 1e6:.1f} MB)")
+    print(f"Bands: {train_lr.shape[1]} (B2, B3, B4, B8)")
+    print(f"Scale: {train_hr.shape[-1] / train_lr.shape[-1]:.1f}x")
+    print(f"Metadata Sidecars: {METADATA_DIR} ({len(all_scenes)} files)")
     print(f"{'='*60}")
 
-    return str(train_path), str(val_path)
+    return str(train_path), str(val_path), str(test_path)
 
 
 if __name__ == "__main__":

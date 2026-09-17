@@ -1,0 +1,292 @@
+[
+  {
+    "config_name": "A_Bicubic",
+    "git_version": "v0.2.0-clean",
+    "dataset_version": "v1.0-scene-separated",
+    "seed": 42,
+    "lr": 0.0,
+    "batch_size": 0,
+    "epochs": 0,
+    "loss_weights": {
+      "lambda_rec": 0.0,
+      "lambda_sam": 0.0,
+      "lambda_dc": 0.0,
+      "lambda_unc": 0.0
+    },
+    "architecture": "Bicubic Interpolation (Deterministic baseline)",
+    "num_parameters": 0,
+    "latency_per_patch_s": 0.0021,
+    "output_range": [
+      0.0,
+      1.2
+    ],
+    "train_loss": 0.0,
+    "val_loss": 0.0,
+    "test_metrics": {
+      "psnr_db": 32.5367,
+      "ssim": 0.7569,
+      "sam_degrees": 3.5,
+      "downsample_consistency_mae": 0.003,
+      "spectral_mae": 0.0169,
+      "hallucination_rate": 0.0351,
+      "correctness_score": 0.7885
+    },
+    "test_metrics_std": {
+      "psnr_db_std": 1.3091,
+      "ssim_std": 0.0543,
+      "sam_degrees_std": 0.2619,
+      "downsample_consistency_mae_std": 0.0005,
+      "spectral_mae_std": 0.0028,
+      "hallucination_rate_std": 0.003,
+      "correctness_score_std": 0.1041
+    },
+    "calibration_metrics": null
+  },
+  {
+    "config_name": "B_RCAN_L1",
+    "git_version": "4225267",
+    "dataset_version": "v1.0-scene-separated",
+    "seed": 42,
+    "lr": 0.0005,
+    "batch_size": 4,
+    "epochs": 3,
+    "loss_weights": {
+      "lambda_rec": 1.0,
+      "lambda_sam": 0.0,
+      "lambda_dc": 0.0,
+      "lambda_unc": 0.0
+    },
+    "architecture": "Lightweight RCAN-Lite (3 RGs, 3 RCABs, Residual Anchor)",
+    "num_parameters": 450184,
+    "latency_per_patch_s": 0.1284,
+    "output_range": [
+      -0.0162,
+      1.1044
+    ],
+    "train_loss": 0.0167,
+    "val_loss": 0.0176,
+    "test_metrics": {
+      "psnr_db": 32.6267,
+      "ssim": 0.7473,
+      "sam_degrees": 3.5467,
+      "downsample_consistency_mae": 0.0023,
+      "spectral_mae": 0.0171,
+      "hallucination_rate": 0.051,
+      "correctness_score": 0.8079
+    },
+    "test_metrics_std": {
+      "psnr_db_std": 1.2857,
+      "ssim_std": 0.0543,
+      "sam_degrees_std": 0.2436,
+      "downsample_consistency_mae_std": 0.0003,
+      "spectral_mae_std": 0.0028,
+      "hallucination_rate_std": 0.0046,
+      "correctness_score_std": 0.1004
+    },
+    "calibration_metrics": null
+  },
+  {
+    "config_name": "C_RCAN_L1_DC",
+    "git_version": "4225267",
+    "dataset_version": "v1.0-scene-separated",
+    "seed": 42,
+    "lr": 0.0005,
+    "batch_size": 4,
+    "epochs": 3,
+    "loss_weights": {
+      "lambda_rec": 1.0,
+      "lambda_sam": 0.0,
+      "lambda_dc": 0.1,
+      "lambda_unc": 0.0
+    },
+    "architecture": "Lightweight RCAN-Lite (3 RGs, 3 RCABs, Residual Anchor)",
+    "num_parameters": 450184,
+    "latency_per_patch_s": 0.1137,
+    "output_range": [
+      -0.0168,
+      1.1077
+    ],
+    "train_loss": 0.0169,
+    "val_loss": 0.0178,
+    "test_metrics": {
+      "psnr_db": 32.62,
+      "ssim": 0.7468,
+      "sam_degrees": 3.5533,
+      "downsample_consistency_mae": 0.0021,
+      "spectral_mae": 0.0171,
+      "hallucination_rate": 0.0524,
+      "correctness_score": 0.8082
+    },
+    "test_metrics_std": {
+      "psnr_db_std": 1.2811,
+      "ssim_std": 0.0543,
+      "sam_degrees_std": 0.2457,
+      "downsample_consistency_mae_std": 0.0003,
+      "spectral_mae_std": 0.0028,
+      "hallucination_rate_std": 0.0047,
+      "correctness_score_std": 0.1004
+    },
+    "calibration_metrics": null
+  },
+  {
+    "config_name": "D_RCAN_L1_SAM_DC",
+    "git_version": "4225267",
+    "dataset_version": "v1.0-scene-separated",
+    "seed": 42,
+    "lr": 0.0005,
+    "batch_size": 4,
+    "epochs": 3,
+    "loss_weights": {
+      "lambda_rec": 1.0,
+      "lambda_sam": 0.1,
+      "lambda_dc": 0.1,
+      "lambda_unc": 0.0
+    },
+    "architecture": "Lightweight RCAN-Lite (3 RGs, 3 RCABs, Residual Anchor)",
+    "num_parameters": 450184,
+    "latency_per_patch_s": 0.1143,
+    "output_range": [
+      -0.0121,
+      1.1054
+    ],
+    "train_loss": 0.0231,
+    "val_loss": 0.0244,
+    "test_metrics": {
+      "psnr_db": 32.6267,
+      "ssim": 0.7471,
+      "sam_degrees": 3.54,
+      "downsample_consistency_mae": 0.0022,
+      "spectral_mae": 0.0171,
+      "hallucination_rate": 0.0554,
+      "correctness_score": 0.8085
+    },
+    "test_metrics_std": {
+      "psnr_db_std": 1.2857,
+      "ssim_std": 0.0543,
+      "sam_degrees_std": 0.2483,
+      "downsample_consistency_mae_std": 0.0003,
+      "spectral_mae_std": 0.0028,
+      "hallucination_rate_std": 0.0048,
+      "correctness_score_std": 0.1014
+    },
+    "calibration_metrics": null
+  },
+  {
+    "config_name": "E_RCAN_Full_Uncertainty",
+    "git_version": "4225267",
+    "dataset_version": "v1.0-scene-separated",
+    "seed": 42,
+    "lr": 0.0005,
+    "batch_size": 4,
+    "epochs": 3,
+    "loss_weights": {
+      "lambda_rec": 1.0,
+      "lambda_sam": 0.1,
+      "lambda_dc": 0.1,
+      "lambda_unc": 0.2
+    },
+    "architecture": "Lightweight RCAN-Lite (3 RGs, 3 RCABs, Residual Anchor)",
+    "num_parameters": 456197,
+    "latency_per_patch_s": 0.13,
+    "output_range": [
+      -0.051,
+      1.1234
+    ],
+    "train_loss": -0.2516,
+    "val_loss": -0.2658,
+    "test_metrics": {
+      "psnr_db": 31.85,
+      "ssim": 0.714,
+      "sam_degrees": 3.9367,
+      "downsample_consistency_mae": 0.0038,
+      "spectral_mae": 0.0186,
+      "hallucination_rate": 0.1326,
+      "correctness_score": 0.551
+    },
+    "test_metrics_std": {
+      "psnr_db_std": 1.1481,
+      "ssim_std": 0.0518,
+      "sam_degrees_std": 0.1791,
+      "downsample_consistency_mae_std": 0.0005,
+      "spectral_mae_std": 0.0027,
+      "hallucination_rate_std": 0.023,
+      "correctness_score_std": 0.0596
+    },
+    "calibration_metrics": {
+      "is_calibrated": false,
+      "calibration_status": "Predicted Uncertainty (Uncalibrated)",
+      "validation_nll": -1.0944,
+      "mean_sigma": 0.15388,
+      "mean_absolute_error": 0.01859,
+      "pearson_correlation": 0.3438,
+      "spearman_correlation": 0.2568,
+      "coverage_1sigma": 0.9998,
+      "coverage_2sigma": 0.9999,
+      "high_error_threshold": 0.02699,
+      "auroc_high_error": 0.6635,
+      "auprc_high_error": 0.3409,
+      "calibration_curve": [
+        {
+          "bin": 0,
+          "mean_predicted_sigma": 0.11724,
+          "mean_actual_error": 0.01548,
+          "count": 19661
+        },
+        {
+          "bin": 1,
+          "mean_predicted_sigma": 0.12524,
+          "mean_actual_error": 0.01642,
+          "count": 19661
+        },
+        {
+          "bin": 2,
+          "mean_predicted_sigma": 0.13044,
+          "mean_actual_error": 0.01678,
+          "count": 19661
+        },
+        {
+          "bin": 3,
+          "mean_predicted_sigma": 0.13478,
+          "mean_actual_error": 0.01731,
+          "count": 19660
+        },
+        {
+          "bin": 4,
+          "mean_predicted_sigma": 0.13879,
+          "mean_actual_error": 0.0176,
+          "count": 19661
+        },
+        {
+          "bin": 5,
+          "mean_predicted_sigma": 0.14279,
+          "mean_actual_error": 0.01796,
+          "count": 19661
+        },
+        {
+          "bin": 6,
+          "mean_predicted_sigma": 0.14714,
+          "mean_actual_error": 0.01848,
+          "count": 19660
+        },
+        {
+          "bin": 7,
+          "mean_predicted_sigma": 0.1525,
+          "mean_actual_error": 0.01904,
+          "count": 19661
+        },
+        {
+          "bin": 8,
+          "mean_predicted_sigma": 0.16157,
+          "mean_actual_error": 0.01964,
+          "count": 19661
+        },
+        {
+          "bin": 9,
+          "mean_predicted_sigma": 0.28834,
+          "mean_actual_error": 0.02717,
+          "count": 19661
+        }
+      ]
+    }
+  }
+]

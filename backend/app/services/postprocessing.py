@@ -54,29 +54,54 @@ def compute_inference_metrics(
         ssim = compute_ssim(sr, hr)
         sam = compute_sam(sr, hr)
 
+        from training.losses import compute_spectral_mae, compute_gradient_similarity, compute_hallucination_and_correctness
+        spec_mae = compute_spectral_mae(sr, hr)
+        grad_sim = compute_gradient_similarity(sr, hr)
+        halluc_metrics = compute_hallucination_and_correctness(sr, hr)
+
         metrics["psnr"] = {
             "value": round(psnr, 2),
             "unit": "dB",
-            "description": "Peak Signal-to-Noise Ratio. Higher = better reconstruction. "
-                          "Good SR: 28-35 dB.",
+            "description": "Peak Signal-to-Noise Ratio. Higher = better reconstruction.",
             "quality": "good" if psnr > 30 else "fair" if psnr > 25 else "poor"
         }
 
         metrics["ssim"] = {
             "value": round(ssim, 4),
             "unit": "",
-            "description": "Structural Similarity Index. Range [0,1]. Higher = better "
-                          "structural preservation. Good SR: > 0.8.",
-            "quality": "good" if ssim > 0.85 else "fair" if ssim > 0.7 else "poor"
+            "description": "Structural Similarity Index. Range [0,1]. Higher = better structural preservation.",
+            "quality": "good" if ssim > 0.80 else "fair" if ssim > 0.7 else "poor"
         }
 
         metrics["sam"] = {
             "value": round(sam, 2),
             "unit": "degrees",
-            "description": "Spectral Angle Mapper. Lower = better spectral fidelity. "
-                          "Measures if colors/bands are correct, not just sharp. "
-                          "Good SR: < 5°.",
-            "quality": "good" if sam < 5 else "fair" if sam < 10 else "poor"
+            "description": "Spectral Angle Mapper. Lower = better spectral fidelity. Target: < 5.0°.",
+            "quality": "good" if sam < 5.0 else "fair" if sam < 10.0 else "poor"
+        }
+
+        metrics["spectral_mae"] = {
+            "value": round(spec_mae, 6),
+            "unit": "reflectance",
+            "description": "Mean Absolute Error across all 4 spectral bands.",
+            "quality": "good" if spec_mae < 0.02 else "fair" if spec_mae < 0.05 else "poor"
+        }
+
+        metrics["gradient_similarity"] = {
+            "value": round(grad_sim, 4),
+            "unit": "",
+            "description": "Spatial gradient edge similarity between SR and HR.",
+            "quality": "good" if grad_sim > 0.85 else "fair" if grad_sim > 0.70 else "poor"
+        }
+
+        metrics["hallucination_fidelity"] = {
+            "false_edge_rate": halluc_metrics["false_edge_rate"],
+            "missing_edge_rate": halluc_metrics["missing_edge_rate"],
+            "high_freq_hallucination_rate": halluc_metrics["high_freq_hallucination_rate"],
+            "correctness_score": halluc_metrics["correctness_score"],
+            "consistency_score": halluc_metrics["consistency_score"],
+            "synthesis_score": halluc_metrics["synthesis_score"],
+            "description": "Quantitative hallucination vs fidelity assessment."
         }
 
     # Image statistics (always available)

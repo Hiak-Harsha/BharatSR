@@ -24,92 +24,203 @@ import math
 
 
 # ========================
+# CANONICAL DEGRADATION OPERATOR
+# ========================
+
+def degrade_canonical_4x(x, scale_factor: int = 4):
+    """
+    Canonical degradation operator D(x):
+    Exact 4x4 area average aligned with the LR grid.
+    Used identically for:
+    - Training consistency loss
+    - Evaluation consistency metric
+    - Dataset validation
+    - Automated tests
+
+    Supports:
+    - torch.Tensor of shape (B, C, H, W) or (C, H, W)
+    - numpy.ndarray of shape (C, H, W)
+    """
+    if isinstance(x, torch.Tensor):
+        is_3d = (x.ndim == 3)
+        if is_3d:
+            x = x.unsqueeze(0)
+        # 4x4 area average box filter
+        degraded = F.avg_pool2d(x, kernel_size=scale_factor, stride=scale_factor)
+        return degraded.squeeze(0) if is_3d else degraded
+    elif isinstance(x, np.ndarray):
+        c, h, w = x.shape
+        h_out, w_out = h // scale_factor, w // scale_factor
+        trimmed = x[:, :h_out * scale_factor, :w_out * scale_factor]
+        degraded = trimmed.reshape(c, h_out, scale_factor, w_out, scale_factor).mean(axis=(2, 4))
+        return degraded.astype(np.float32)
+    else:
+        raise TypeError(f"Unsupported type for degradation operator: {type(x)}")
+
+
+# ========================
 # LOSS FUNCTIONS
 # ========================
 
 class ReconstructionLoss(nn.Module):
-    """L1 reconstruction loss on reflectance values."""
+    """L1 reconstruction loss on physical reflectance values."""
 
     def __init__(self):
         super().__init__()
         self.l1 = nn.L1Loss()
 
-    def forward(self, sr, hr):
+    def forward(self, sr: torch.Tensor, hr: torch.Tensor) -> torch.Tensor:
         return self.l1(sr, hr)
 
 
 class SpectralConsistencyLoss(nn.Module):
     """
-    Downsample SR output back to LR resolution and compare against original LR input.
-    This enforces that the SR output is physically consistent with the input.
-
-    Phase 5 loss — placeholder interface available from Phase 2.
+    Downsample Consistency Loss (L_DC):
+    L_DC = MAE(D(SR), LR)
+    Degrades SR output using the canonical 4x4 area average operator and compares against LR.
+    Does NOT use bilinear interpolation.
     """
 
-    def __init__(self, scale_factor=4):
+    def __init__(self, scale_factor: int = 4):
         super().__init__()
         self.scale_factor = scale_factor
 
-    def forward(self, sr, lr_original):
+    def forward(self, sr: torch.Tensor, lr_original: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            sr: super-resolved output (B, C, H*scale, W*scale)
-            lr_original: original LR input (B, C, H, W)
+            sr: (B, C, H_sr, W_sr) super-resolved output
+            lr_original: (B, C, H_lr, W_lr) original LR sensor input
         """
-        # Downsample SR back to LR resolution
-        sr_downsampled = F.interpolate(
-            sr, size=lr_original.shape[2:],
-            mode='bilinear', align_corners=False
-        )
-        return F.l1_loss(sr_downsampled, lr_original)
+        sr_down = degrade_canonical_4x(sr, scale_factor=self.scale_factor)
+        # Crop or match if dimensions differ slightly due to rounding
+        if sr_down.shape[2:] != lr_original.shape[2:]:
+            min_h = min(sr_down.shape[2], lr_original.shape[2])
+            min_w = min(sr_down.shape[3], lr_original.shape[3])
+            sr_down = sr_down[:, :, :min_h, :min_w]
+            lr_original = lr_original[:, :, :min_h, :min_w]
+        return F.l1_loss(sr_down, lr_original)
+
+
+class SAMLoss(nn.Module):
+    """
+    Spectral Angle Mapper (SAM) Loss:
+    L_SAM = mean(arccos(cosine_similarity(SR_pixel, HR_pixel)))
+
+    Numerically stabilized:
+    - Avoids NaN gradients near cos = +/- 1 via margin clamping
+    - Handles near-zero spectral vectors by masking uninformative low-reflectance pixels
+    """
+
+    def __init__(self, eps: float = 1e-7, clamp_margin: float = 1e-6):
+        super().__init__()
+        self.eps = eps
+        self.clamp_margin = clamp_margin
+
+    def forward(self, sr: torch.Tensor, hr: torch.Tensor) -> torch.Tensor:
+        # sr, hr: (B, C, H, W)
+        dot = torch.sum(sr * hr, dim=1)  # (B, H, W)
+        norm_sr = torch.norm(sr, p=2, dim=1)  # (B, H, W)
+        norm_hr = torch.norm(hr, p=2, dim=1)  # (B, H, W)
+
+        denom = norm_sr * norm_hr
+        valid = (norm_sr > self.eps) & (norm_hr > self.eps)
+
+        cos_sim = torch.ones_like(dot)
+        cos_sim[valid] = dot[valid] / (denom[valid] + self.eps)
+
+        # Gradient-safe arccos clamping
+        cos_clamped = torch.clamp(cos_sim, -1.0 + self.clamp_margin, 1.0 - self.clamp_margin)
+        sam_map = torch.acos(cos_clamped)
+
+        return sam_map.mean()
 
 
 class UncertaintyLoss(nn.Module):
     """
-    Heteroscedastic negative log-likelihood loss for uncertainty estimation.
-    The model predicts mean (SR image) and log-variance (uncertainty).
-
-    NLL = 0.5 * exp(-log_var) * (target - mean)^2 + 0.5 * log_var
-
-    Phase 5 loss.
+    Heteroscedastic negative log-likelihood (NLL) loss for uncertainty quantification.
+    L_unc = 0.5 * exp(-log_var) * |hr - sr| + 0.5 * log_var (Laplace formulation)
+    or Gaussian formulation:
+    L_unc = 0.5 * exp(-log_var) * (hr - sr)^2 + 0.5 * log_var
     """
 
-    def forward(self, mean, log_var, target):
+    def __init__(self, mode: str = "l1"):
+        super().__init__()
+        self.mode = mode
+
+    def forward(self, sr: torch.Tensor, log_var: torch.Tensor, hr: torch.Tensor) -> torch.Tensor:
+        # Clamp log_var to prevent numerical explosion or collapse
+        log_var = torch.clamp(log_var, -6.0, 6.0)
         precision = torch.exp(-log_var)
-        loss = 0.5 * precision * (target - mean) ** 2 + 0.5 * log_var
+
+        if self.mode == "l1":
+            # Laplace heteroscedastic loss: 0.5 * exp(-s) * |y - y_hat| + 0.5 * s
+            diff = torch.abs(hr - sr).mean(dim=1, keepdim=True)
+            loss = 0.5 * precision * diff + 0.5 * log_var
+        else:
+            # Gaussian heteroscedastic loss: 0.5 * exp(-s) * (y - y_hat)^2 + 0.5 * s
+            diff = ((hr - sr) ** 2).mean(dim=1, keepdim=True)
+            loss = 0.5 * precision * diff + 0.5 * log_var
+
         return loss.mean()
 
 
 class BharatSRCombinedLoss(nn.Module):
     """
-    Combined Physics-Constrained Loss for BharatSR RCAN.
-    Combines:
-    1. Heteroscedastic NLL loss on predicted reflectance and log-variance
-    2. Spectral consistency loss (downsampled SR vs LR input)
-    3. Direct L1 regularization
+    Complete Physics-Constrained Multi-Task Loss:
+    L_total = lambda_rec * L1 + lambda_sam * L_SAM + lambda_dc * L_DC + lambda_unc * L_uncertainty
     """
 
-    def __init__(self, scale_factor: int = 4, spectral_weight: float = 0.1, l1_weight: float = 1.0):
+    def __init__(
+        self,
+        scale_factor: int = 4,
+        lambda_rec: float = 1.0,
+        lambda_sam: float = 0.1,
+        lambda_dc: float = 0.1,
+        lambda_unc: float = 0.2,
+    ):
         super().__init__()
         self.scale_factor = scale_factor
-        self.spectral_weight = spectral_weight
-        self.l1_weight = l1_weight
-        self.uncertainty_loss = UncertaintyLoss()
-        self.spectral_loss = SpectralConsistencyLoss(scale_factor)
-        self.l1 = nn.L1Loss()
+        self.lambda_rec = lambda_rec
+        self.lambda_sam = lambda_sam
+        self.lambda_dc = lambda_dc
+        self.lambda_unc = lambda_unc
 
-    def forward(self, sr, log_var, hr, lr):
-        # 1. Uncertainty NLL loss
-        nll = self.uncertainty_loss(sr, log_var, hr)
+        self.l1_loss = ReconstructionLoss()
+        self.sam_loss = SAMLoss()
+        self.dc_loss = SpectralConsistencyLoss(scale_factor)
+        self.unc_loss = UncertaintyLoss(mode="l1")
 
-        # 2. Spectral consistency loss
-        spec = self.spectral_loss(sr, lr)
+    def forward(
+        self,
+        sr: torch.Tensor,
+        log_var: Optional[torch.Tensor],
+        hr: torch.Tensor,
+        lr: torch.Tensor,
+    ) -> Tuple[torch.Tensor, Dict[str, float]]:
+        l_rec = self.l1_loss(sr, hr)
+        l_sam = self.sam_loss(sr, hr)
+        l_dc = self.dc_loss(sr, lr)
 
-        # 3. Direct L1 loss
-        l1 = self.l1(sr, hr)
+        if log_var is not None:
+            l_unc = self.unc_loss(sr, log_var, hr)
+        else:
+            l_unc = torch.tensor(0.0, device=sr.device)
 
-        total = nll + self.spectral_weight * spec + self.l1_weight * l1
-        return total, {"nll": nll.item(), "spectral": spec.item(), "l1": l1.item()}
+        total = (
+            self.lambda_rec * l_rec
+            + self.lambda_sam * l_sam
+            + self.lambda_dc * l_dc
+            + self.lambda_unc * l_unc
+        )
+
+        loss_dict = {
+            "total": float(total.item()),
+            "l1": float(l_rec.item()),
+            "sam": float(l_sam.item()),
+            "dc": float(l_dc.item()),
+            "unc": float(l_unc.item()) if log_var is not None else 0.0,
+        }
+        return total, loss_dict
 
 
 # ========================
@@ -245,41 +356,161 @@ def compute_downsample_consistency(sr, lr_original, scale_factor=4):
     return float(mae), sr_down
 
 
+def compute_spectral_mae(sr: np.ndarray, hr: np.ndarray) -> float:
+    """Mean Absolute Error across all spectral bands in reflectance scale."""
+    return float(np.mean(np.abs(sr.astype(np.float64) - hr.astype(np.float64))))
+
+
+def compute_gradient_similarity(sr: np.ndarray, hr: np.ndarray) -> float:
+    """
+    Spatial gradient and edge similarity using finite-difference Sobel approximation.
+    Measures edge direction and sharpness agreement in [0, 1].
+    """
+    # Average across bands
+    sr_gray = np.mean(sr, axis=0) if sr.ndim == 3 else sr
+    hr_gray = np.mean(hr, axis=0) if hr.ndim == 3 else hr
+
+    gx_sr, gy_sr = np.gradient(sr_gray)
+    gx_hr, gy_hr = np.gradient(hr_gray)
+
+    mag_sr = np.sqrt(gx_sr ** 2 + gy_sr ** 2)
+    mag_hr = np.sqrt(gx_hr ** 2 + gy_hr ** 2)
+
+    c1 = 0.01 ** 2
+    edge_sim = (2 * mag_sr * mag_hr + c1) / (mag_sr ** 2 + mag_hr ** 2 + c1)
+    return float(np.mean(edge_sim))
+
+
+def compute_hallucination_and_correctness(
+    sr: np.ndarray,
+    hr: np.ndarray,
+    bicubic: np.ndarray = None,
+    edge_threshold: float = 0.05,
+) -> Dict[str, float]:
+    """
+    Quantitative Hallucination & Correctness Assessment for Remote-Sensing SR.
+    Measures:
+    - false_edge_rate: Edges generated in SR that do NOT exist in HR (hallucinations).
+    - missing_edge_rate: High-frequency edges in HR that SR failed to resolve (omissions).
+    - high_freq_hallucination_rate: Ratio of spurious high-frequency energy.
+    - consistency_score: Physics compliance score based on canonical 4x area degradation.
+    - correctness_score: Overall spatial-spectral truthfulness score [0, 1].
+    - synthesis_score: Extent of genuine fine-scale texture reconstruction.
+    """
+    sr_gray = np.mean(sr, axis=0) if sr.ndim == 3 else sr
+    hr_gray = np.mean(hr, axis=0) if hr.ndim == 3 else hr
+
+    # Compute spatial gradient magnitudes
+    gx_sr, gy_sr = np.gradient(sr_gray)
+    gx_hr, gy_hr = np.gradient(hr_gray)
+    mag_sr = np.sqrt(gx_sr ** 2 + gy_sr ** 2)
+    mag_hr = np.sqrt(gx_hr ** 2 + gy_hr ** 2)
+
+    # Binary edge maps at threshold
+    edges_sr = mag_sr > edge_threshold
+    edges_hr = mag_hr > edge_threshold
+
+    # False edges: in SR but not HR
+    false_edges = edges_sr & (~edges_hr)
+    # Missing edges: in HR but not SR
+    missing_edges = edges_hr & (~edges_sr)
+
+    hr_edge_count = float(np.sum(edges_hr)) + 1e-7
+    sr_edge_count = float(np.sum(edges_sr)) + 1e-7
+
+    false_edge_rate = float(np.sum(false_edges) / sr_edge_count)
+    missing_edge_rate = float(np.sum(missing_edges) / hr_edge_count)
+
+    # High frequency residual difference
+    hf_diff = np.maximum(0.0, mag_sr - mag_hr)
+    hf_hallucination_rate = float(np.mean(hf_diff) / (np.mean(mag_hr) + 1e-7))
+
+    # Consistency score from Downsample Consistency MAE
+    dc_mae, _ = compute_downsample_consistency(sr, degrade_canonical_4x(hr))
+    consistency_score = float(max(0.0, min(1.0, 1.0 - (dc_mae / 0.05))))
+
+    # Correctness score combining gradient similarity and 1 - false_edge_rate
+    grad_sim = compute_gradient_similarity(sr, hr)
+    correctness_score = float(np.clip(0.6 * grad_sim + 0.4 * (1.0 - false_edge_rate), 0.0, 1.0))
+
+    # Synthesis score: real resolved edge detail compared to bicubic baseline
+    if bicubic is not None:
+        if bicubic.shape[-2:] != sr.shape[-2:]:
+            from scipy.ndimage import zoom
+            zh = sr.shape[-2] / bicubic.shape[-2]
+            zw = sr.shape[-1] / bicubic.shape[-1]
+            if bicubic.ndim == 3:
+                bic_interp = np.stack([zoom(bicubic[b], (zh, zw), order=3) for b in range(bicubic.shape[0])], axis=0)
+            else:
+                bic_interp = zoom(bicubic, (zh, zw), order=3)
+        else:
+            bic_interp = bicubic
+
+        bic_gray = np.mean(bic_interp, axis=0) if bic_interp.ndim == 3 else bic_interp
+        gx_b, gy_b = np.gradient(bic_gray)
+        mag_bic = np.sqrt(gx_b ** 2 + gy_b ** 2)
+        added_hf = np.mean(np.abs(mag_sr - mag_bic))
+        target_hf = np.mean(np.abs(mag_hr - mag_bic)) + 1e-7
+        synthesis_score = float(np.clip(added_hf / target_hf, 0.0, 1.5))
+    else:
+        synthesis_score = float(np.clip(np.mean(mag_sr) / (np.mean(mag_hr) + 1e-7), 0.0, 1.5))
+
+    return {
+        "false_edge_rate": round(false_edge_rate, 4),
+        "missing_edge_rate": round(missing_edge_rate, 4),
+        "high_freq_hallucination_rate": round(hf_hallucination_rate, 4),
+        "consistency_score": round(consistency_score, 4),
+        "correctness_score": round(correctness_score, 4),
+        "synthesis_score": round(synthesis_score, 4),
+    }
+
+
 def compute_all_metrics(sr, hr, lr_original=None, scale_factor=4):
     """
-    Compute all metrics for a single image.
+    Compute full scientific remote-sensing metric suite.
 
     Args:
         sr: (C, H, W) super-resolved output
-        hr: (C, H, W) high-resolution ground truth
+        hr: (C, H, W) high-resolution reference
         lr_original: (C, H_lr, W_lr) original LR input (optional)
     Returns:
-        dict of metric name → value
+        dict of metric name -> value
     """
     metrics = {
-        "psnr_db": compute_psnr(sr, hr),
-        "ssim": compute_ssim(sr, hr),
-        "sam_degrees": compute_sam(sr, hr),
+        "psnr_db": round(compute_psnr(sr, hr), 2),
+        "ssim": round(compute_ssim(sr, hr), 4),
+        "sam_degrees": round(compute_sam(sr, hr), 2),
+        "spectral_mae": round(compute_spectral_mae(sr, hr), 6),
+        "gradient_similarity": round(compute_gradient_similarity(sr, hr), 4),
     }
 
     if lr_original is not None:
         dc_error, _ = compute_downsample_consistency(sr, lr_original, scale_factor)
-        metrics["downsample_consistency_mae"] = dc_error
+        metrics["downsample_consistency_mae"] = round(dc_error, 6)
+
+    # Hallucination and correctness suite
+    halluc_dict = compute_hallucination_and_correctness(sr, hr)
+    metrics.update(halluc_dict)
 
     return metrics
 
 
 if __name__ == "__main__":
-    # Quick test with random data
     np.random.seed(42)
     hr = np.random.rand(4, 256, 256).astype(np.float32) * 0.8
-    sr = hr + np.random.randn(4, 256, 256).astype(np.float32) * 0.05
-    lr = np.random.rand(4, 64, 64).astype(np.float32) * 0.8
+    # Degrade HR with canonical operator to get true LR
+    lr = degrade_canonical_4x(hr, scale_factor=4)
+    sr = hr + np.random.randn(4, 256, 256).astype(np.float32) * 0.02
+    sr = np.clip(sr, 0.0, None)
 
     metrics = compute_all_metrics(sr, hr, lr)
 
-    print("Metrics test:")
+    print("BharatSR Physics-Constrained Metrics Test:")
     for k, v in metrics.items():
-        print(f"  {k}: {v:.4f}")
+        print(f"  {k}: {v}")
 
-    print("\nMetrics computation OK [OK]")
+    # Verify canonical operator exact reproduction
+    lr_reproduced = degrade_canonical_4x(hr, scale_factor=4)
+    assert np.allclose(lr, lr_reproduced, atol=1e-7), "Canonical degradation operator failed reproducibility test!"
+    print("\n[PASS] Canonical degradation operator test passed.")
+

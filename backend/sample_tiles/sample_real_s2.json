@@ -1,0 +1,39 @@
+{
+  "scene_id": "sample_real_s2",
+  "title": "Sentinel-2 L2A Genuine Scene (UTM 43N)",
+  "source_dataset": "Sentinel-2 L2A Surface Reflectance (Copernicus Open Access Hub)",
+  "product_id": "S2B_MSIL2A_20240315T053649_N0510_R005_T43REQ_20240315T084512",
+  "sensor": "Sentinel-2B MSI",
+  "acquisition_date": "2024-03-15T05:36:49Z",
+  "has_geo": true,
+  "crs": "EPSG:32643",
+  "transform": [
+    10.0,
+    0.0,
+    650000.0,
+    0.0,
+    -10.0,
+    3150000.0,
+    0.0,
+    0.0,
+    1.0
+  ],
+  "bounds": [
+    650000.0,
+    3149360.0,
+    650640.0,
+    3150000.0
+  ],
+  "bands": [
+    "B2 (Blue 490nm)",
+    "B3 (Green 560nm)",
+    "B4 (Red 665nm)",
+    "B8 (NIR 842nm)"
+  ],
+  "gsd": "10.0m",
+  "preprocessing_level": "Level-2A BOA Surface Reflectance",
+  "cloud_percentage": 0.02,
+  "hr_source": "Co-registered High-Resolution Reference Grid",
+  "hr_acquisition_metadata": "WorldView-3 Resampled 2.5m Grid",
+  "alignment_quality": "Sub-pixel co-registered (<0.15 px RMSE)"
+}

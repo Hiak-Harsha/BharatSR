@@ -166,6 +166,164 @@ def run_bicubic_baseline(
     return sr_image, inference_time
 
 
+def create_blend_window(tile_hr_h: int, tile_hr_w: int) -> np.ndarray:
+    """Cosine/Hann 2D window for feathering overlapping tile borders."""
+    wy = np.hanning(tile_hr_h + 2)[1:-1]
+    wx = np.hanning(tile_hr_w + 2)[1:-1]
+    window = np.outer(wy, wx).astype(np.float32)
+    return np.maximum(window, 1e-4)
+
+
+def run_tiled_inference(
+    model: torch.nn.Module,
+    lr_image: np.ndarray,
+    scale_factor: int = 4,
+    tile_size: int = 64,
+    overlap: int = 16,
+    device: torch.device = torch.device("cpu"),
+) -> Tuple[np.ndarray, float, Optional[np.ndarray]]:
+    """
+    Memory-safe sliding-window super-resolution inference with overlap blending.
+    Enables arbitrary large-image processing without RAM exhaustion or edge artifacts.
+    """
+    c, h, w = lr_image.shape
+    if h <= tile_size and w <= tile_size:
+        return run_inference(model, lr_image, scale_factor, device)
+
+    t0 = time.time()
+    h_out, w_out = h * scale_factor, w * scale_factor
+    out_sr = np.zeros((c, h_out, w_out), dtype=np.float32)
+    weights = np.zeros((1, h_out, w_out), dtype=np.float32)
+
+    has_unc = isinstance(model, RCAN) and getattr(model, "predict_uncertainty", False)
+    out_unc = np.zeros((h_out, w_out), dtype=np.float32) if has_unc else None
+
+    step = max(1, tile_size - overlap)
+    y_starts = list(range(0, max(1, h - tile_size + 1), step))
+    if y_starts[-1] + tile_size < h:
+        y_starts.append(h - tile_size)
+    x_starts = list(range(0, max(1, w - tile_size + 1), step))
+    if x_starts[-1] + tile_size < w:
+        x_starts.append(w - tile_size)
+
+    for y0 in y_starts:
+        for x0 in x_starts:
+            tile_lr = lr_image[:, y0:y0 + tile_size, x0:x0 + tile_size]
+            sr_tile, _, unc_tile = run_inference(model, tile_lr, scale_factor, device)
+
+            th, tw = sr_tile.shape[1], sr_tile.shape[2]
+            win = create_blend_window(th, tw)
+
+            y_out0 = y0 * scale_factor
+            x_out0 = x0 * scale_factor
+
+            out_sr[:, y_out0:y_out0 + th, x_out0:x_out0 + tw] += sr_tile * win
+            weights[:, y_out0:y_out0 + th, x_out0:x_out0 + tw] += win
+
+            if out_unc is not None and unc_tile is not None:
+                out_unc[y_out0:y_out0 + th, x_out0:x_out0 + tw] += unc_tile * win
+
+    out_sr /= np.maximum(weights, 1e-7)
+    out_sr = np.clip(out_sr, 0.0, None)
+    if out_unc is not None:
+        out_unc /= np.maximum(weights[0], 1e-7)
+
+    latency = time.time() - t0
+    return out_sr, latency, out_unc
+
+
+def process_geotiff_file(
+    input_path: str,
+    output_path: str,
+    model: torch.nn.Module,
+    scale_factor: int = 4,
+    tile_size: int = 64,
+    overlap: int = 16,
+    device: torch.device = torch.device("cpu"),
+) -> dict:
+    """
+    Production end-to-end GeoTIFF super-resolution pipeline:
+    Reads rasterio input -> memory-safe tiled inference -> preserves CRS -> writes 4-band Float32 GeoTIFF.
+    """
+    import rasterio
+    from rasterio.transform import Affine
+
+    with rasterio.open(input_path) as src:
+        crs = src.crs
+        in_transform = src.transform
+        nodata = src.nodata
+        raw_data = src.read().astype(np.float32)
+
+    # Reflectance scaling
+    if raw_data.max() > 10.0:
+        raw_data = raw_data / 10000.0
+    elif raw_data.max() > 1.5:
+        raw_data = raw_data / 255.0
+    raw_data = np.clip(raw_data, 0.0, None)
+
+    if raw_data.shape[0] > 4:
+        raw_data = raw_data[:4]
+    elif raw_data.shape[0] < 4:
+        pad = np.zeros((4 - raw_data.shape[0], raw_data.shape[1], raw_data.shape[2]), dtype=np.float32)
+        raw_data = np.concatenate([raw_data, pad], axis=0)
+
+    c_in, h_in, w_in = raw_data.shape
+    sr_image, latency, unc_map = run_tiled_inference(
+        model=model,
+        lr_image=raw_data,
+        scale_factor=scale_factor,
+        tile_size=tile_size,
+        overlap=overlap,
+        device=device,
+    )
+
+    out_transform = Affine(
+        in_transform.a / scale_factor,
+        in_transform.b / scale_factor,
+        in_transform.c,
+        in_transform.d / scale_factor,
+        in_transform.e / scale_factor,
+        in_transform.f,
+    )
+
+    c, h, w = sr_image.shape
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    with rasterio.open(
+        output_path,
+        "w",
+        driver="GTiff",
+        height=h,
+        width=w,
+        count=c,
+        dtype=np.float32,
+        crs=crs,
+        transform=out_transform,
+        nodata=nodata,
+    ) as dst:
+        for b in range(c):
+            dst.write(sr_image[b], b + 1)
+        band_names = ["B2 - Blue", "B3 - Green", "B4 - Red", "B8 - NIR"]
+        for b in range(min(c, len(band_names))):
+            dst.set_band_description(b + 1, band_names[b])
+        dst.update_tags(
+            sensor="Sentinel-2 MSI",
+            processing=f"BharatSR {scale_factor}x Super-Resolution",
+            gsd=f"{abs(out_transform.a):.2f}m-equivalent output grid",
+        )
+
+    return {
+        "status": "success",
+        "output_path": output_path,
+        "crs": str(crs),
+        "scale_factor": scale_factor,
+        "input_size": [h_in, w_in],
+        "output_size": [h, w],
+        "dimensions": [c, h, w],
+        "latency_seconds": round(latency, 2),
+    }
+
+
 # Global registry instance
 model_registry = ModelRegistry()
+
 

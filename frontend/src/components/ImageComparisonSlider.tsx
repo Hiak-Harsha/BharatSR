@@ -3,16 +3,19 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { MultiSpectralViews } from "@/lib/api";
 
-type ViewMode = "slider" | "side-by-side" | "ground-truth" | "uncertainty";
-type SpectralBand = "rgb" | "cir" | "ndvi" | "nir" | "red" | "green" | "blue";
+type ViewMode = "slider" | "side-by-side" | "evidence-4view" | "ground-truth" | "uncertainty" | "error-map";
+type SpectralBand = "rgb" | "cir" | "ndvi" | "nir" | "red" | "green" | "blue" | "error";
 
 interface Props {
   beforeSrc: string; // fallback LR
   afterSrc: string;  // fallback SR
+  bicubicSrc?: string;
   groundTruthSrc?: string;
   uncertaintySrc?: string;
+  errorMapSrc?: string;
   beforeViews?: MultiSpectralViews;
   afterViews?: MultiSpectralViews;
+  bicubicViews?: MultiSpectralViews;
   groundTruthViews?: MultiSpectralViews;
   beforeLabel?: string;
   afterLabel?: string;
@@ -21,13 +24,16 @@ interface Props {
 export default function ImageComparisonSlider({
   beforeSrc,
   afterSrc,
+  bicubicSrc,
   groundTruthSrc,
   uncertaintySrc,
+  errorMapSrc,
   beforeViews,
   afterViews,
+  bicubicViews,
   groundTruthViews,
-  beforeLabel = "LR Input (Upscaled)",
-  afterLabel = "BharatSR Output (4x)",
+  beforeLabel = "LR Input (10m)",
+  afterLabel = "BharatSR Output (2.5m-equiv)",
 }: Props) {
   const [sliderPosition, setSliderPosition] = useState(50);
   const [isDragging, setIsDragging] = useState(false);
@@ -38,7 +44,9 @@ export default function ImageComparisonSlider({
   // Select image source based on active spectral band
   const currentBefore = (beforeViews && beforeViews[activeBand]) || beforeSrc;
   const currentAfter = (afterViews && afterViews[activeBand]) || afterSrc;
+  const currentBicubic = (bicubicViews && bicubicViews[activeBand]) || bicubicSrc || beforeSrc;
   const currentGT = (groundTruthViews && groundTruthViews[activeBand]) || groundTruthSrc;
+  const effectiveErrorMap = errorMapSrc || (afterViews && afterViews.error);
 
   const handleMove = useCallback((clientX: number) => {
     if (!containerRef.current) return;
@@ -81,7 +89,7 @@ export default function ImageComparisonSlider({
     <div className="space-y-3">
       {/* View Mode Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 p-1 rounded-lg bg-slate-900 border border-slate-800 text-xs">
+        <div className="flex flex-wrap items-center gap-1.5 p-1 rounded-lg bg-slate-900 border border-slate-800 text-xs">
           <button
             onClick={() => setActiveView("slider")}
             className={`px-3 py-1 rounded-md font-medium transition ${
@@ -104,6 +112,18 @@ export default function ImageComparisonSlider({
           </button>
           {groundTruthSrc && (
             <button
+              onClick={() => setActiveView("evidence-4view")}
+              className={`px-3 py-1 rounded-md font-medium transition flex items-center gap-1 ${
+                activeView === "evidence-4view"
+                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              <span>🔬</span> Evidence 4-View
+            </button>
+          )}
+          {groundTruthSrc && (
+            <button
               onClick={() => setActiveView("ground-truth")}
               className={`px-3 py-1 rounded-md font-medium transition ${
                 activeView === "ground-truth"
@@ -111,7 +131,7 @@ export default function ImageComparisonSlider({
                   : "text-slate-400 hover:text-slate-200"
               }`}
             >
-              Ground Truth
+              3-Way Ground Truth
             </button>
           )}
           {uncertaintySrc && (
@@ -126,15 +146,27 @@ export default function ImageComparisonSlider({
               Uncertainty Heatmap
             </button>
           )}
+          {effectiveErrorMap && (
+            <button
+              onClick={() => setActiveView("error-map")}
+              className={`px-3 py-1 rounded-md font-medium transition ${
+                activeView === "error-map"
+                  ? "bg-rose-500/20 text-rose-300 border border-rose-500/40"
+                  : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              Absolute Error Map
+            </button>
+          )}
         </div>
 
         <span className="text-xs text-slate-500 font-mono hidden sm:inline">
-          4x Physics-Preserving Spatial Resolution
+          4x SR output on a 2.5m-equivalent grid
         </span>
       </div>
 
       {/* Spectral Band Switcher */}
-      {activeView !== "uncertainty" && (
+      {activeView !== "uncertainty" && activeView !== "error-map" && (
         <div className="p-2 rounded-xl bg-slate-950/80 border border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider pl-1">
@@ -171,6 +203,18 @@ export default function ImageComparisonSlider({
               >
                 <span>🌿</span> NDVI Vegetation Index
               </button>
+              {effectiveErrorMap && (
+                <button
+                  onClick={() => setActiveBand("error")}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition flex items-center gap-1.5 ${
+                    activeBand === "error"
+                      ? "bg-amber-500/20 text-amber-300 border border-amber-500/50 shadow-sm"
+                      : "text-slate-400 hover:text-slate-200 hover:bg-slate-900"
+                  }`}
+                >
+                  <span>📉</span> Error Map (|SR-HR|)
+                </button>
+              )}
               <div className="h-3.5 w-px bg-slate-800 mx-1 hidden md:block" />
               <button
                 onClick={() => setActiveBand("nir")}
@@ -286,7 +330,7 @@ export default function ImageComparisonSlider({
               <span className="text-xs font-semibold text-slate-300">
                 {beforeLabel} ({activeBand.toUpperCase()})
               </span>
-              <span className="text-[10px] text-slate-500 font-mono">Original Sentinel-2/NAIP</span>
+              <span className="text-[10px] text-slate-500 font-mono">Original Sentinel-2 (10m)</span>
             </div>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -302,7 +346,7 @@ export default function ImageComparisonSlider({
               <span className="text-xs font-semibold text-cyan-300">
                 {afterLabel} ({activeBand.toUpperCase()})
               </span>
-              <span className="text-[10px] text-cyan-500 font-mono">4x Enhanced (BharatSR)</span>
+              <span className="text-[10px] text-cyan-500 font-mono">4x Enhanced (2.5m-equiv Grid)</span>
             </div>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -315,7 +359,72 @@ export default function ImageComparisonSlider({
         </div>
       )}
 
-      {/* Ground Truth View */}
+      {/* Evidence Mode: Synchronized 4-View (LR, Bicubic, RCAN, HR) */}
+      {activeView === "evidence-4view" && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="glass-panel p-2.5">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs font-semibold text-slate-300">1. Low-Resolution Input</span>
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">10m GSD</span>
+            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={currentBefore}
+              alt="LR Input"
+              className="w-full aspect-square rounded-lg object-contain bg-slate-950"
+              style={{ imageRendering: "pixelated" }}
+            />
+            <div className="mt-1.5 text-[10px] text-slate-500 text-center">Unprocessed Sentinel-2 L2A</div>
+          </div>
+
+          <div className="glass-panel p-2.5 border-amber-500/20">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs font-semibold text-amber-300">2. Bicubic Baseline</span>
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-400 font-mono">2.5m Grid</span>
+            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={currentBicubic}
+              alt="Bicubic Baseline"
+              className="w-full aspect-square rounded-lg object-contain bg-slate-950"
+              style={{ imageRendering: "pixelated" }}
+            />
+            <div className="mt-1.5 text-[10px] text-slate-500 text-center">Classical Polynomial Interpolation</div>
+          </div>
+
+          <div className="glass-panel p-2.5 border-cyan-500/40">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs font-semibold text-cyan-300">3. BharatSR (RCAN)</span>
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 font-mono">2.5m Grid</span>
+            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={currentAfter}
+              alt="BharatSR RCAN"
+              className="w-full aspect-square rounded-lg object-contain bg-slate-950 shadow-md shadow-cyan-950/40"
+              style={{ imageRendering: "pixelated" }}
+            />
+            <div className="mt-1.5 text-[10px] text-cyan-400/80 text-center">Physics-Constrained Channel Attention</div>
+          </div>
+
+          <div className="glass-panel p-2.5 border-emerald-500/40">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs font-semibold text-emerald-300">4. Reference Ground Truth</span>
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 font-mono">HR Sensor</span>
+            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={currentGT || currentAfter}
+              alt="Ground Truth HR"
+              className="w-full aspect-square rounded-lg object-contain bg-slate-950 shadow-md shadow-emerald-950/40"
+              style={{ imageRendering: "pixelated" }}
+            />
+            <div className="mt-1.5 text-[10px] text-emerald-400/80 text-center">Optical Validation Target</div>
+          </div>
+        </div>
+      )}
+
+      {/* Ground Truth 3-Way View */}
       {activeView === "ground-truth" && currentGT && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="glass-panel p-3">
@@ -369,6 +478,39 @@ export default function ImageComparisonSlider({
               src={uncertaintySrc}
               alt="Uncertainty Heatmap"
               className="w-full aspect-square rounded-lg object-contain bg-slate-950 shadow-lg shadow-amber-950/40"
+              style={{ imageRendering: "pixelated" }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Absolute Error Map View */}
+      {activeView === "error-map" && effectiveErrorMap && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="glass-panel p-3 border-cyan-500/30">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-semibold text-cyan-300">{afterLabel}</span>
+              <span className="text-[10px] text-cyan-500 font-mono">Reconstructed Output</span>
+            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={afterSrc}
+              alt="SR"
+              className="w-full aspect-square rounded-lg object-contain bg-slate-950"
+              style={{ imageRendering: "pixelated" }}
+            />
+          </div>
+
+          <div className="glass-panel p-3 border-rose-500/40">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-semibold text-rose-300">Absolute Error Map (|SR - HR|)</span>
+              <span className="text-[10px] text-rose-400 font-mono">Plasma: Yellow/White = Higher Residual Error</span>
+            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={effectiveErrorMap}
+              alt="Absolute Error Map"
+              className="w-full aspect-square rounded-lg object-contain bg-slate-950 shadow-lg shadow-rose-950/40"
               style={{ imageRendering: "pixelated" }}
             />
           </div>

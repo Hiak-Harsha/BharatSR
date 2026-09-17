@@ -1,0 +1,19 @@
+{
+  "scene_id": "sample_0",
+  "title": "Synthetic Scene 0",
+  "source_dataset": "Procedural Synthetic Reference",
+  "product_id": "SYNTHETIC_PROCEDURAL_0",
+  "sensor": "Synthetic Simulation (4-band: R, G, B, NIR)",
+  "acquisition_date": "N/A (Synthetic Procedural Pattern)",
+  "has_geo": false,
+  "crs": null,
+  "transform": null,
+  "bounds": null,
+  "bands": ["B2 (Blue)", "B3 (Green)", "B4 (Red)", "B8 (NIR)"],
+  "gsd": "Synthetic grid unit",
+  "preprocessing_level": "Normalized physical reflectance [0, ~1+]",
+  "cloud_percentage": 0.0,
+  "hr_source": "Procedural mathematical target (scale 4x)",
+  "hr_acquisition_metadata": "Synthetic generation seed 42",
+  "alignment_quality": "Exact grid alignment by construction"
+}
