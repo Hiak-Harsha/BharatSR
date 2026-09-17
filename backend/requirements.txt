@@ -1,0 +1,23 @@
+# Core ML
+torch
+torchvision
+
+# Geospatial
+rasterio
+numpy
+
+# Image processing & metrics
+scikit-image
+matplotlib
+Pillow
+
+# API
+fastapi
+uvicorn[standard]
+python-multipart
+
+# Data
+opensr-test
+
+# DB
+aiosqlite
