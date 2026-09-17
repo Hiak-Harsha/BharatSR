@@ -42,3 +42,8 @@ Thumbs.db
 *.local
 .env
 .env*.local
+
+# Archives
+*.zip
+*.tar.gz
+
