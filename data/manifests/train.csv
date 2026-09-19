@@ -1,0 +1,19 @@
+scene_id,lr_product,hr_product,region,date,gsd,cloud_fraction,registration_rmse
+scene_1,SYNTH_S2_SCENE_001,SYNTH_HR_REF_001,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
+scene_2,SYNTH_S2_SCENE_002,SYNTH_HR_REF_002,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
+scene_3,SYNTH_S2_SCENE_003,SYNTH_HR_REF_003,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
+scene_4,SYNTH_S2_SCENE_004,SYNTH_HR_REF_004,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
+scene_5,SYNTH_S2_SCENE_005,SYNTH_HR_REF_005,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
+scene_6,SYNTH_S2_SCENE_006,SYNTH_HR_REF_006,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
+scene_7,SYNTH_S2_SCENE_007,SYNTH_HR_REF_007,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
+scene_10,SYNTH_S2_SCENE_010,SYNTH_HR_REF_010,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
+scene_12,SYNTH_S2_SCENE_012,SYNTH_HR_REF_012,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
+scene_13,SYNTH_S2_SCENE_013,SYNTH_HR_REF_013,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
+scene_14,SYNTH_S2_SCENE_014,SYNTH_HR_REF_014,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
+scene_15,SYNTH_S2_SCENE_015,SYNTH_HR_REF_015,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
+scene_17,SYNTH_S2_SCENE_017,SYNTH_HR_REF_017,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
+scene_19,SYNTH_S2_SCENE_019,SYNTH_HR_REF_019,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
+scene_20,SYNTH_S2_SCENE_020,SYNTH_HR_REF_020,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
+scene_21,SYNTH_S2_SCENE_021,SYNTH_HR_REF_021,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
+scene_22,SYNTH_S2_SCENE_022,SYNTH_HR_REF_022,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
+scene_23,SYNTH_S2_SCENE_023,SYNTH_HR_REF_023,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0

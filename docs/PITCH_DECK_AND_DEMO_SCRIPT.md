@@ -32,14 +32,14 @@
 > *"BharatSR formulates super-resolution not as image filtering, but as **physics-constrained spatial regression with spatial uncertainty quantification**:*
 > 1. *We strictly preserve physical surface reflectance $[0, \sim 1+]$, allowing bright targets like desert sands or clouds to exceed $1.0$ without artificial clipping.*
 > 2. *We enforce a **Spectral Angle Mapper (SAM) loss** below $5.0^\circ$, ensuring that multi-spectral ratios across Red, Green, Blue, and Near-Infrared remain radiometrically authentic.*
-> 3. *We incorporate **Vectorized Downsample Consistency**, mathematically guaranteeing that the enhanced 2.5m output downsamples back to the original 10m sensor capture with an MAE under $0.01$.*
+> 3. *We incorporate **Vectorized Downsample Consistency**, mathematically constraining that the enhanced 2.5m-equivalent output downsamples back to the original 10m sensor capture with an MAE under $0.01$.*
 > 4. *Our production model uses a **Dual-Head Residual Channel Attention Network (RCAN)**: while the primary head synthesizes $4\times$ reflectance, the secondary head predicts a per-pixel heteroscedastic log-variance map, flagging potential hallucinations before intelligence officers make tactical decisions."*
 
 ### Slide 5: Real-Time Live Demonstration Script
 *(Switch to Web Browser at `http://localhost:3000`)*
 
 1. **Step 1: Authentic Sentinel-2 Scene Selection**
-   > *"Notice that our dashboard defaults directly to authentic Sentinel-2 Level-2A surface reflectance data—here, the Roorkee/Haridwar Ganga Canal corridor with preserved UTM Zone 44N (EPSG:32644) georeferencing. It contains genuine 10m bands: Blue (B2), Green (B3), Red (B4), and NIR (B8)."*
+   > *"Notice that our dashboard defaults directly to authentic Sentinel-2 Level-2A surface reflectance data—here, the Roorkee/Haridwar Ganga Canal corridor demonstration tile with preserved UTM Zone 44N (EPSG:32644) georeferencing. It contains genuine 10m bands: Blue (B2), Green (B3), Red (B4), and NIR (B8)."*
 2. **Step 2: Run 4x Super-Resolution & Seamless Tiled Inference**
    > *"Let's click **'Run 4x Super-Resolution'**. In under 120 milliseconds on CPU, the dual-head RCAN model enhances the 10m tile onto a 2.5m-equivalent grid. For large operational scenes, BharatSR automatically routes through a seamless Hann-windowed overlapping tiling engine to eliminate boundary seams and prevent memory overflow."*
 3. **Step 3: Interactive Split-Slider & Click-to-Inspect Reticle**

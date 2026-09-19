@@ -871,7 +871,7 @@ export default function Home() {
                       Scientific Remote-Sensing Evaluation Suite
                     </h3>
                     <p className="text-[11px] text-slate-400">
-                      OpenSR-Test and physics-constrained fidelity verification across reconstruction, spectral, and consistency axes
+                      OpenSR-inspired and observation-constrained fidelity verification across reconstruction, spectral, and consistency axes
                     </p>
                   </div>
                   <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800/60">
@@ -1324,7 +1324,7 @@ export default function Home() {
 
                           <div className="glass-panel p-2.5 bg-slate-950/60 border border-cyan-500/40">
                             <div className="flex items-center justify-between mb-1.5">
-                              <span className="text-xs font-semibold text-cyan-300">2. BharatSR (2.5m)</span>
+                              <span className="text-xs font-semibold text-cyan-300">2. BharatSR (2.5m-equiv Grid)</span>
                               <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 font-mono">Enhanced</span>
                             </div>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1339,18 +1339,18 @@ export default function Home() {
 
                           <div className="glass-panel p-2.5 bg-slate-950/60 border border-emerald-500/40">
                             <div className="flex items-center justify-between mb-1.5">
-                              <span className="text-xs font-semibold text-emerald-300">3. Ground Truth HR</span>
-                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 font-mono">Target</span>
+                              <span className="text-xs font-semibold text-emerald-300">3. Independent / Demonstration Reference</span>
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 font-mono">Reference</span>
                             </div>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
                               src={task.masks.ground_truth || task.masks.rcan}
-                              alt="HR Reference Mask"
+                              alt="Reference Mask"
                               className="w-full aspect-square rounded-lg object-contain bg-black shadow-md shadow-emerald-950/40"
                               style={{ imageRendering: "pixelated" }}
                             />
                             <div className="mt-1.5 text-[10px] text-emerald-400/80 text-center">
-                              {task.masks.ground_truth ? "Reference Ground Truth" : "Self-Refined Target"}
+                              {task.masks.ground_truth ? "Independent Reference Target" : "Reference Interpretation"}
                             </div>
                           </div>
                         </div>
@@ -1369,7 +1369,7 @@ export default function Home() {
                             </thead>
                             <tbody className="divide-y divide-slate-800/60 font-mono">
                               <tr className="hover:bg-slate-900/40 transition">
-                                <td className="py-2.5 px-3 text-amber-300 font-sans font-medium">1. Bicubic Baseline (2.5m)</td>
+                                <td className="py-2.5 px-3 text-amber-300 font-sans font-medium">1. Bicubic Baseline (2.5m-equiv Grid)</td>
                                 <td className="py-2.5 px-3 text-amber-300">{task.bicubic.iou.toFixed(3)}</td>
                                 <td className="py-2.5 px-3 text-amber-300">{task.bicubic.f1.toFixed(3)}</td>
                                 <td className="py-2.5 px-3 text-amber-300">{task.bicubic.precision.toFixed(3)}</td>
@@ -1377,7 +1377,7 @@ export default function Home() {
                               </tr>
                               <tr className="hover:bg-slate-900/40 transition bg-cyan-950/20">
                                 <td className="py-2.5 px-3 text-cyan-300 font-sans font-bold flex items-center gap-1.5">
-                                  <span>🚀</span> 2. BharatSR Output (2.5m)
+                                  <span>🚀</span> 2. BharatSR Output (2.5m-equiv Grid)
                                 </td>
                                 <td className="py-2.5 px-3 text-cyan-300 font-bold">{task.rcan.iou.toFixed(3)}</td>
                                 <td className="py-2.5 px-3 text-cyan-300 font-bold">{task.rcan.f1.toFixed(3)}</td>

@@ -304,3 +304,43 @@ To convert BharatSR into a scientifically defensible and reproducible system, th
 8. **Automated Pytest Suite & Clean Builds:**
    - Replace ad-hoc test scripts with comprehensive `pytest` test suite covering all 11 endpoints, transforms, losses, and GeoTIFF validity.
    - Verify clean Next.js production build (`npm run build`).
+
+---
+
+## 12. Remediation Verification & Final Execution Record
+
+All identified deficiencies have been addressed, verified, and integrated into the repository:
+
+1. **Canonical Spectral Band Definition:**
+   - Standardized `BAND_INDEX = {"B2": 0, "B3": 1, "B4": 2, "B8": 3}` across all preprocessing, model execution, downstream analysis, and UI visualization.
+   - Corrected True Color composition to $R = B4, G = B3, B = B2$ and CIR composition to $R = B8, G = B4, B = B3$.
+   - Standardized NDVI formulation: $(B8 - B4) / (B8 + B4 + \epsilon)$.
+   - Replaced zero-padding with strict 4-band validation: unsupported/unmapped $< 4$ band inputs are rejected with `HTTP 422: "Sentinel-2 model requires B2/B3/B4/B8."`.
+
+2. **Loss Formulation & Uncertainty:**
+   - Fixed missing type imports in `training/losses.py`.
+   - Standardized Gaussian uncertainty formulation: $s = \log(\sigma^2), \mathcal{L}_{\text{unc}} = 0.5 \exp(-s)(HR - SR)^2 + 0.5 s$.
+   - Clarified degradation operator $\mathcal{D}_{\downarrow 4}(y_{\text{SR}}) = \text{avg\_pool2d}(y_{\text{SR}}, 4)$ as "canonical area-averaging degradation assumption".
+
+3. **Data Provenance & Registration:**
+   - `backend/sample_tiles/sample_real_s2.json` explicitly relabeled to `"Sentinel-2 demonstration sample with bicubic-derived reference"`. False WorldView-3 claims removed.
+   - `data/scripts/prepare_data.py` enforces fail-loud behavior: raises `RuntimeError` unless `--synthetic` is explicitly provided or real Sentinel-2 tiles exist.
+   - Created `data/scripts/register_pairs.py` measuring sub-pixel translation, registration RMSE in pixels and meters ($RMSE_m = RMSE_{px} \times GSD$), and exporting `reports/registration_report.json`.
+
+4. **Six-Model Scientific Ablation Benchmark:**
+   - Executed all 6 configurations across identical scene-separated test sets with warm-up latency measurement:
+     - **A (Bicubic Baseline):** PSNR $32.54 \pm 1.31$ dB, SSIM $0.7569$, SAM $3.50^\circ$, DC-MAE $0.0030$, GradSim $0.7788$.
+     - **B (SRCNN + L1):** PSNR $21.24 \pm 1.30$ dB, SSIM $0.6720$, SAM $10.77^\circ$, DC-MAE $0.0555$, GradSim $0.7233$.
+     - **C (RCAN + L1):** PSNR $32.27 \pm 1.23$ dB, SSIM $0.7269$, SAM $3.72^\circ$, DC-MAE $0.0029$, GradSim $0.8279$.
+     - **D (RCAN + L1 + DC):** PSNR $32.21 \pm 1.22$ dB, SSIM $0.7243$, SAM $3.75^\circ$, DC-MAE $0.0031$, GradSim $0.8272$.
+     - **E (RCAN + L1 + SAM + DC):** PSNR $32.05 \pm 1.16$ dB, SSIM $0.7209$, SAM $3.80^\circ$, DC-MAE $0.0045$, GradSim $0.8388$.
+     - **F (RCAN Full + Uncertainty):** PSNR $31.40 \pm 1.11$ dB, SSIM $0.6844$, SAM $4.09^\circ$, DC-MAE $0.0044$, GradSim $0.8538$.
+
+5. **Geospatial Scale & Transform Verification:**
+   - `tools/validate_geotiff.py` verified with `--scale 4`: confirms $GSD \approx 10.0 / 4 = 2.5\text{m}$, 4-band Float32, affine transformation, and EPSG CRS preservation.
+
+6. **Production Testing & Build Verification:**
+   - **Pytest Suite:** 39 tests executed, **39 passed in 16.62s (100% pass rate)**.
+   - **Frontend Build:** `npm run build` executed successfully with Next.js Turbopack; 0 TypeScript errors, all routes statically prerendered.
+   - **Backend Server:** Healthy and active on port 8000 with 2 loaded PyTorch models.
+

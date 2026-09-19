@@ -3,24 +3,28 @@ BharatSR — Loss Functions and Metrics (Phase 2+)
 
 Loss functions:
 - L1 reconstruction loss (Phase 2 baseline)
-- Spectral consistency loss (Phase 5)
-- Heteroscedastic NLL loss for uncertainty (Phase 5)
+- SAM spectral loss (Phase 5)
+- Canonical area-averaging downsample consistency loss (Phase 5)
+- Heteroscedastic Gaussian NLL loss for uncertainty quantification (Phase 5)
 
 Metrics:
 - PSNR (Peak Signal-to-Noise Ratio)
 - SSIM (Structural Similarity Index)
 - SAM (Spectral Angle Mapper) — measures spectral fidelity
-- Downsample consistency error
+- Downsample consistency error (MAE)
+- Spectral MAE
+- Edge-based diagnostics: false_edge_rate, missing_edge_rate, high_frequency_excess_rate
 
 CRITICAL: All metrics operate on physical reflectance values [0, ~1+].
 No ImageNet normalization anywhere.
 """
 
+from typing import Optional, Tuple, Dict
+import math
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
-import math
 
 
 # ========================
@@ -29,12 +33,15 @@ import math
 
 def degrade_canonical_4x(x, scale_factor: int = 4):
     """
-    Canonical degradation operator D(x):
+    Canonical area-averaging degradation assumption D(x):
     Exact 4x4 area average aligned with the LR grid.
+    Described strictly as the 'canonical area-averaging degradation assumption'
+    (not 'exact optical physics', which requires sensor PSF/MTF modeling).
+
     Used identically for:
     - Training consistency loss
-    - Evaluation consistency metric
-    - Dataset validation
+    - Validation consistency evaluation
+    - Scientific benchmarking
     - Automated tests
 
     Supports:
@@ -138,12 +145,12 @@ class SAMLoss(nn.Module):
 class UncertaintyLoss(nn.Module):
     """
     Heteroscedastic negative log-likelihood (NLL) loss for uncertainty quantification.
-    L_unc = 0.5 * exp(-log_var) * |hr - sr| + 0.5 * log_var (Laplace formulation)
-    or Gaussian formulation:
-    L_unc = 0.5 * exp(-log_var) * (hr - sr)^2 + 0.5 * log_var
+    Statistically consistent Gaussian formulation:
+    s = log(sigma^2)
+    L_unc = 0.5 * exp(-s) * (HR - SR)^2 + 0.5 * s
     """
 
-    def __init__(self, mode: str = "l1"):
+    def __init__(self, mode: str = "gaussian"):
         super().__init__()
         self.mode = mode
 
@@ -152,13 +159,14 @@ class UncertaintyLoss(nn.Module):
         log_var = torch.clamp(log_var, -6.0, 6.0)
         precision = torch.exp(-log_var)
 
-        if self.mode == "l1":
-            # Laplace heteroscedastic loss: 0.5 * exp(-s) * |y - y_hat| + 0.5 * s
-            diff = torch.abs(hr - sr).mean(dim=1, keepdim=True)
+        if self.mode == "gaussian":
+            # Statistically consistent Gaussian heteroscedastic loss:
+            # 0.5 * exp(-s) * (HR - SR)^2 + 0.5 * s
+            diff = ((hr - sr) ** 2).mean(dim=1, keepdim=True)
             loss = 0.5 * precision * diff + 0.5 * log_var
         else:
-            # Gaussian heteroscedastic loss: 0.5 * exp(-s) * (y - y_hat)^2 + 0.5 * s
-            diff = ((hr - sr) ** 2).mean(dim=1, keepdim=True)
+            # Laplace formulation: 0.5 * exp(-s) * |HR - SR| + 0.5 * s
+            diff = torch.abs(hr - sr).mean(dim=1, keepdim=True)
             loss = 0.5 * precision * diff + 0.5 * log_var
 
         return loss.mean()
@@ -188,7 +196,7 @@ class BharatSRCombinedLoss(nn.Module):
         self.l1_loss = ReconstructionLoss()
         self.sam_loss = SAMLoss()
         self.dc_loss = SpectralConsistencyLoss(scale_factor)
-        self.unc_loss = UncertaintyLoss(mode="l1")
+        self.unc_loss = UncertaintyLoss(mode="gaussian")
 
     def forward(
         self,
@@ -261,7 +269,6 @@ def compute_ssim(sr, hr, win_size=7):
 
     # Use a simple uniform window
     kernel_size = win_size
-    pad = kernel_size // 2
 
     # Compute means using uniform filter
     from scipy.ndimage import uniform_filter
@@ -329,8 +336,6 @@ def compute_downsample_consistency(sr, lr_original, scale_factor=4):
     Returns:
         Mean absolute error between downsampled SR and original LR.
     """
-    # Downsample SR to LR resolution via area averaging
-    # Fast vectorized area averaging in NumPy
     c, h_hr, w_hr = sr.shape
     _, h_lr, w_lr = lr_original.shape
 
@@ -366,7 +371,6 @@ def compute_gradient_similarity(sr: np.ndarray, hr: np.ndarray) -> float:
     Spatial gradient and edge similarity using finite-difference Sobel approximation.
     Measures edge direction and sharpness agreement in [0, 1].
     """
-    # Average across bands
     sr_gray = np.mean(sr, axis=0) if sr.ndim == 3 else sr
     hr_gray = np.mean(hr, axis=0) if hr.ndim == 3 else hr
 
@@ -388,12 +392,13 @@ def compute_hallucination_and_correctness(
     edge_threshold: float = 0.05,
 ) -> Dict[str, float]:
     """
-    Quantitative Hallucination & Correctness Assessment for Remote-Sensing SR.
+    Quantitative Edge Diagnostics & Correctness Assessment for Remote-Sensing SR.
     Measures:
-    - false_edge_rate: Edges generated in SR that do NOT exist in HR (hallucinations).
-    - missing_edge_rate: High-frequency edges in HR that SR failed to resolve (omissions).
-    - high_freq_hallucination_rate: Ratio of spurious high-frequency energy.
-    - consistency_score: Physics compliance score based on canonical 4x area degradation.
+    - false_edge_rate: Edges generated in SR that do NOT exist in HR.
+    - missing_edge_rate: High-frequency edges in HR that SR failed to resolve.
+    - high_frequency_excess_rate: Ratio of spurious high-frequency energy beyond HR.
+    - high_freq_hallucination_rate: (Legacy alias for high_frequency_excess_rate).
+    - consistency_score: Observation consistency based on canonical 4x area degradation.
     - correctness_score: Overall spatial-spectral truthfulness score [0, 1].
     - synthesis_score: Extent of genuine fine-scale texture reconstruction.
     """
@@ -423,7 +428,7 @@ def compute_hallucination_and_correctness(
 
     # High frequency residual difference
     hf_diff = np.maximum(0.0, mag_sr - mag_hr)
-    hf_hallucination_rate = float(np.mean(hf_diff) / (np.mean(mag_hr) + 1e-7))
+    hf_excess_rate = float(np.mean(hf_diff) / (np.mean(mag_hr) + 1e-7))
 
     # Consistency score from Downsample Consistency MAE
     dc_mae, _ = compute_downsample_consistency(sr, degrade_canonical_4x(hr))
@@ -458,7 +463,8 @@ def compute_hallucination_and_correctness(
     return {
         "false_edge_rate": round(false_edge_rate, 4),
         "missing_edge_rate": round(missing_edge_rate, 4),
-        "high_freq_hallucination_rate": round(hf_hallucination_rate, 4),
+        "high_frequency_excess_rate": round(hf_excess_rate, 4),
+        "high_freq_hallucination_rate": round(hf_excess_rate, 4),
         "consistency_score": round(consistency_score, 4),
         "correctness_score": round(correctness_score, 4),
         "synthesis_score": round(synthesis_score, 4),
@@ -488,29 +494,8 @@ def compute_all_metrics(sr, hr, lr_original=None, scale_factor=4):
         dc_error, _ = compute_downsample_consistency(sr, lr_original, scale_factor)
         metrics["downsample_consistency_mae"] = round(dc_error, 6)
 
-    # Hallucination and correctness suite
-    halluc_dict = compute_hallucination_and_correctness(sr, hr)
-    metrics.update(halluc_dict)
+    # Edge-based diagnostics & correctness suite
+    edge_dict = compute_hallucination_and_correctness(sr, hr)
+    metrics.update(edge_dict)
 
     return metrics
-
-
-if __name__ == "__main__":
-    np.random.seed(42)
-    hr = np.random.rand(4, 256, 256).astype(np.float32) * 0.8
-    # Degrade HR with canonical operator to get true LR
-    lr = degrade_canonical_4x(hr, scale_factor=4)
-    sr = hr + np.random.randn(4, 256, 256).astype(np.float32) * 0.02
-    sr = np.clip(sr, 0.0, None)
-
-    metrics = compute_all_metrics(sr, hr, lr)
-
-    print("BharatSR Physics-Constrained Metrics Test:")
-    for k, v in metrics.items():
-        print(f"  {k}: {v}")
-
-    # Verify canonical operator exact reproduction
-    lr_reproduced = degrade_canonical_4x(hr, scale_factor=4)
-    assert np.allclose(lr, lr_reproduced, atol=1e-7), "Canonical degradation operator failed reproducibility test!"
-    print("\n[PASS] Canonical degradation operator test passed.")
-

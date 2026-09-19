@@ -448,7 +448,7 @@ export default function ImageComparisonSlider({
           <div className="glass-panel p-2.5 border-amber-500/20">
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-xs font-semibold text-amber-300">2. Bicubic Baseline</span>
-              <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-400 font-mono">2.5m Grid</span>
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-950/60 text-amber-400 font-mono">2.5m-equiv Grid</span>
             </div>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -463,7 +463,7 @@ export default function ImageComparisonSlider({
           <div className="glass-panel p-2.5 border-cyan-500/40">
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-xs font-semibold text-cyan-300">3. BharatSR (RCAN)</span>
-              <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 font-mono">2.5m Grid</span>
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-950 text-cyan-300 font-mono">2.5m-equiv Grid</span>
             </div>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -472,22 +472,22 @@ export default function ImageComparisonSlider({
               className="w-full aspect-square rounded-lg object-contain bg-slate-950 shadow-md shadow-cyan-950/40"
               style={{ imageRendering: "pixelated" }}
             />
-            <div className="mt-1.5 text-[10px] text-cyan-400/80 text-center">Physics-Constrained Channel Attention</div>
+            <div className="mt-1.5 text-[10px] text-cyan-400/80 text-center">Observation-Constrained Channel Attention</div>
           </div>
 
           <div className="glass-panel p-2.5 border-emerald-500/40">
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-xs font-semibold text-emerald-300">4. Reference Ground Truth</span>
-              <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 font-mono">HR Sensor</span>
+              <span className="text-xs font-semibold text-emerald-300">4. Independent HR / Demonstration Reference</span>
+              <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 font-mono">Reference Fidelity</span>
             </div>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={currentGT || currentAfter}
-              alt="Ground Truth HR"
+              alt="Reference Grid"
               className="w-full aspect-square rounded-lg object-contain bg-slate-950 shadow-md shadow-emerald-950/40"
               style={{ imageRendering: "pixelated" }}
             />
-            <div className="mt-1.5 text-[10px] text-emerald-400/80 text-center">Optical Validation Target</div>
+            <div className="mt-1.5 text-[10px] text-emerald-400/80 text-center">Independent Target / Demonstration Reference</div>
           </div>
         </div>
       )}

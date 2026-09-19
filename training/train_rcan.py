@@ -220,26 +220,39 @@ def train_rcan(
     test_metrics = {
         "psnr_db": [], "ssim": [], "sam_degrees": [],
         "downsample_consistency_mae": [], "spectral_mae": [],
-        "hallucination_rate": [], "correctness_score": [],
+        "gradient_similarity": [],
+        "false_edge_rate": [], "missing_edge_rate": [], "high_frequency_excess_rate": [],
+        "correctness_score": [],
     }
     all_sr = []
     all_hr = []
     all_sigma = []
-    t_start = time.time()
+    latencies = []
+    n_samples = len(test_dataset)
 
+    # Warm-up passes (3 cycles)
     with torch.no_grad():
-        for idx in range(min(len(test_dataset), 50)):
+        for _ in range(min(3, n_samples)):
+            lr, _ = test_dataset[0]
+            _ = model(lr.unsqueeze(0).to(device))
+
+        for idx in range(n_samples):
             lr, hr = test_dataset[idx]
             lr_np = lr.numpy()
             hr_np = hr.numpy()
 
-            out_test = model(lr.unsqueeze(0).to(device))
+            lr_in = lr.unsqueeze(0).to(device)
+            t0 = time.perf_counter()
+            out_test = model(lr_in)
+            latencies.append(time.perf_counter() - t0)
+
             sr, log_var = out_test if isinstance(out_test, tuple) else (out_test, None)
             sr_np = sr.squeeze(0).cpu().numpy()
+            sr_np = np.clip(sr_np, 0.0, None)
 
             m = compute_all_metrics(sr_np, hr_np, lr_np, scale_factor)
             for k in test_metrics:
-                val = m.get(k, m.get("high_freq_hallucination_rate", None))
+                val = m.get(k, None)
                 if val is not None:
                     test_metrics[k].append(val)
 
@@ -249,14 +262,13 @@ def train_rcan(
                 std_np = logvar_to_std(log_var).squeeze(0).cpu().numpy()
                 all_sigma.append(std_np)
 
-    test_latency = (time.time() - t_start) / max(1, len(test_dataset))
-
     sr_stacked = np.concatenate(all_sr, axis=0)
     output_min = float(sr_stacked.min())
     output_max = float(sr_stacked.max())
 
     avg_test_metrics = {k: round(float(np.mean(v)), 4) if v else 0.0 for k, v in test_metrics.items()}
     std_test_metrics = {f"{k}_std": round(float(np.std(v)), 4) if v else 0.0 for k, v in test_metrics.items()}
+    median_test_metrics = {f"{k}_median": round(float(np.median(v)), 4) if v else 0.0 for k, v in test_metrics.items()}
 
     # Calibration evaluation if uncertainty head is present
     calibration_metrics = None
@@ -282,12 +294,17 @@ def train_rcan(
         },
         "architecture": f"Lightweight RCAN-Lite ({n_resgroups} RGs, {n_resblocks} RCABs, Residual Anchor)",
         "num_parameters": num_params,
-        "latency_per_patch_s": round(test_latency, 4),
+        "sample_count": n_samples,
+        "latency_mean_s": round(float(np.mean(latencies)), 5),
+        "latency_median_s": round(float(np.median(latencies)), 5),
+        "latency_p95_s": round(float(np.percentile(latencies, 95)), 5),
+        "latency_per_patch_s": round(float(np.mean(latencies)), 5),
         "output_range": [round(output_min, 4), round(output_max, 4)],
         "train_loss": round(train_total_loss, 4),
         "val_loss": round(best_val_loss, 4),
         "test_metrics": avg_test_metrics,
         "test_metrics_std": std_test_metrics,
+        "test_metrics_median": median_test_metrics,
         "calibration_metrics": calibration_metrics,
     }
 

@@ -3,21 +3,84 @@ BharatSR — Preprocessing Service
 Handles band loading, reflectance normalization, and tiling for inference.
 
 CRITICAL: Physical reflectance normalization ONLY. NO ImageNet mean/std.
+Canonical Sentinel-2 4-Band Input Order:
+- B2 (Blue, 490nm)  -> Index 0
+- B3 (Green, 560nm) -> Index 1
+- B4 (Red, 665nm)   -> Index 2
+- B8 (NIR, 842nm)   -> Index 3
 """
 
 import io
+from typing import Dict, Optional, Tuple
 import numpy as np
 from PIL import Image
 
+BAND_INDEX: Dict[str, int] = {
+    "B2": 0,
+    "B3": 1,
+    "B4": 2,
+    "B8": 3,
+}
 
-def load_image_from_bytes(file_bytes: bytes, expected_bands: int = 4) -> np.ndarray:
+BAND_NAMES = ["B2 (Blue)", "B3 (Green)", "B4 (Red)", "B8 (NIR)"]
+BAND_WAVELENGTHS_NM = {"B2": 490, "B3": 560, "B4": 665, "B8": 842}
+
+
+def normalize_reflectance(img: np.ndarray, mode: str = "auto") -> np.ndarray:
+    """
+    Product-aware physical surface reflectance normalization.
+    Explicit input modes:
+    - 'sentinel2_l2a_dn': Sentinel-2 L2A BOA digital numbers (DN 10000 = 1.0 reflectance)
+    - 'reflectance_float': Already physical BOA reflectance [0.0, ~1+], preserves clouds/snow > 1.0
+    - 'uint8_rgb': Standard 8-bit values [0, 255] -> divide by 255.0
+    - 'auto': Inspects data range and dtype to choose appropriate scaling
+    """
+    img = img.astype(np.float32)
+    if mode == "sentinel2_l2a_dn":
+        img = img / 10000.0
+    elif mode == "reflectance_float":
+        pass  # Keep as-is
+    elif mode == "uint8_rgb":
+        img = img / 255.0
+    elif mode == "auto":
+        max_val = float(np.nanmax(img)) if img.size > 0 else 0.0
+        if max_val > 10.0:
+            # Scaled DN (e.g. S2 L2A 0-10000+)
+            img = img / 10000.0
+        elif max_val > 1.5:
+            # 8-bit range (0-255)
+            img = img / 255.0
+        # Otherwise already float reflectance [0, ~1.5]
+    else:
+        raise ValueError(
+            f"Unknown reflectance normalization mode: '{mode}'. "
+            f"Expected 'sentinel2_l2a_dn', 'reflectance_float', 'uint8_rgb', or 'auto'."
+        )
+
+    # Filter invalid negative values, but preserve bright targets > 1.0 (clouds, snow)
+    img = np.clip(img, 0.0, None)
+    return img
+
+
+def load_image_from_bytes(
+    file_bytes: bytes,
+    expected_bands: int = 4,
+    mode: str = "auto",
+    band_mapping: Optional[Dict[str, int]] = None,
+) -> Tuple[np.ndarray, Optional[dict]]:
     """
     Load an image from raw bytes (uploaded file).
-    Returns (C, H, W) numpy array in reflectance scale.
+    Returns (C, H, W) numpy array in reflectance scale and geo_meta dict.
 
     Handles:
-    - Standard RGB/RGBA images (PNG, JPEG)
-    - Multi-band GeoTIFF (via rasterio if available)
+    - Multi-band GeoTIFF (via rasterio)
+    - Standard image formats (PNG, JPEG)
+
+    CRITICAL RULES:
+    - Sentinel-2 model requires B2, B3, B4, B8.
+    - Never pad arbitrary RGB images with zero channels.
+    - If bands < 4 and no explicit mapping is provided, raises ValueError:
+      "Sentinel-2 model requires B2/B3/B4/B8."
     """
     # Try rasterio first for GeoTIFF
     try:
@@ -33,25 +96,38 @@ def load_image_from_bytes(file_bytes: bytes, expected_bands: int = 4) -> np.ndar
                 nodata = dataset.nodata
                 descriptions = [dataset.descriptions[i] or f"Band_{i+1}" for i in range(dataset.count)] if dataset.descriptions else []
                 tags = dict(dataset.tags())
-
                 has_geo = bool(crs is not None and transform is not None)
 
-                # Product-aware reflectance normalization:
-                # Sentinel-2 L2A BOA values are typically scaled by 10000 (DN 10000 = 1.0 reflectance)
-                if img.max() > 10.0:
-                    img = img / 10000.0
-                elif img.max() > 1.5:
-                    img = img / 255.0  # 8-bit imagery
+                # Band selection & validation
+                c = img.shape[0]
+                if band_mapping is not None:
+                    selected = []
+                    for b_key in ["B2", "B3", "B4", "B8"]:
+                        if b_key not in band_mapping:
+                            raise ValueError("Sentinel-2 model requires B2/B3/B4/B8.")
+                        src_idx = band_mapping[b_key]
+                        if src_idx >= c:
+                            raise ValueError(f"Band index {src_idx} out of range for {c}-band image.")
+                        selected.append(img[src_idx])
+                    img = np.stack(selected, axis=0)
+                elif c == 4:
+                    # Exactly 4 bands: standard Sentinel-2 subset [B2, B3, B4, B8]
+                    pass
+                elif c > 4:
+                    s2_map = {}
+                    for i, d in enumerate(descriptions):
+                        for b_name in ["B2", "B3", "B4", "B8"]:
+                            if b_name.lower() in d.lower():
+                                s2_map[b_name] = i
+                    if len(s2_map) == 4:
+                        img = np.stack([img[s2_map["B2"]], img[s2_map["B3"]], img[s2_map["B4"]], img[s2_map["B8"]]], axis=0)
+                    else:
+                        img = img[:expected_bands]
+                else:
+                    # Fewer than 4 bands and no mapping -> REJECT (do not pad with zeros!)
+                    raise ValueError("Sentinel-2 model requires B2/B3/B4/B8.")
 
-                # Filter invalid / negative values, but preserve bright targets > 1.0 (clouds/snow)
-                img = np.clip(img, 0.0, None)
-
-                # Select bands (expected 4: B2, B3, B4, B8)
-                if img.shape[0] > expected_bands:
-                    img = img[:expected_bands]
-                elif img.shape[0] < expected_bands:
-                    pad = np.zeros((expected_bands - img.shape[0], img.shape[1], img.shape[2]), dtype=np.float32)
-                    img = np.concatenate([img, pad], axis=0)
+                img = normalize_reflectance(img, mode=mode)
 
                 geo_meta = {
                     "has_geo": has_geo,
@@ -67,35 +143,43 @@ def load_image_from_bytes(file_bytes: bytes, expected_bands: int = 4) -> np.ndar
                     "message": "Geospatially referenced" if has_geo else "No geospatial reference available",
                 }
                 return img, geo_meta
+    except ValueError:
+        raise
     except Exception:
         pass
 
-    # Fallback: PIL for standard image formats
+    # Fallback: Standard image formats (PNG, JPEG)
     try:
         pil_img = Image.open(io.BytesIO(file_bytes))
         img = np.array(pil_img, dtype=np.float32)
 
-        if img.ndim == 2:
-            # Grayscale → duplicate to expected_bands
-            img = np.stack([img] * expected_bands, axis=0)
-        elif img.ndim == 3:
-            img = img.transpose(2, 0, 1)  # (H, W, C) → (C, H, W)
+        if img.ndim == 3:
+            img = img.transpose(2, 0, 1)  # (H, W, C) -> (C, H, W)
+        elif img.ndim == 2:
+            img = img[np.newaxis, ...]  # (1, H, W)
 
-        # Normalize
-        if img.max() > 1.5:
-            img = img / 255.0
+        c = img.shape[0]
+        if band_mapping is not None:
+            selected = []
+            for b_key in ["B2", "B3", "B4", "B8"]:
+                if b_key not in band_mapping:
+                    raise ValueError("Sentinel-2 model requires B2/B3/B4/B8.")
+                src_idx = band_mapping[b_key]
+                if src_idx >= c:
+                    raise ValueError(f"Band index {src_idx} out of range for {c}-band image.")
+                selected.append(img[src_idx])
+            img = np.stack(selected, axis=0)
+        elif c == 4:
+            pass
+        else:
+            # Reject arbitrary RGB / Grayscale without explicit mapping: DO NOT ZERO-PAD!
+            raise ValueError("Sentinel-2 model requires B2/B3/B4/B8.")
 
-        img = np.clip(img, 0, None)
+        img = normalize_reflectance(img, mode=mode)
+        return img, None
 
-        if img.shape[0] > expected_bands:
-            img = img[:expected_bands]
-        elif img.shape[0] < expected_bands:
-            pad = np.zeros((expected_bands - img.shape[0],
-                           img.shape[1], img.shape[2]), dtype=np.float32)
-            img = np.concatenate([img, pad], axis=0)
-
-        return img, None  # No geo metadata for standard images
-
+    except ValueError:
+        raise
     except Exception as e:
         raise ValueError(f"Could not load image: {e}")
 
@@ -129,13 +213,20 @@ def numpy_to_png_bytes(img: np.ndarray) -> bytes:
     """
     Convert (C, H, W) reflectance array to PNG bytes for API response.
     Clips to [0, 1] for display ONLY — the data itself is not modified.
+    For 4-band Sentinel-2 [B2, B3, B4, B8]: True Color is (B4, B3, B2).
     """
-    if img.shape[0] >= 3:
-        rgb = img[:3].transpose(1, 2, 0)  # (H, W, 3)
+    c = img.shape[0]
+    if c >= 4:
+        rgb = np.stack([
+            img[BAND_INDEX["B4"]],
+            img[BAND_INDEX["B3"]],
+            img[BAND_INDEX["B2"]],
+        ], axis=-1)
+    elif c == 3:
+        rgb = img.transpose(1, 2, 0)
     else:
         rgb = np.stack([img[0]] * 3, axis=-1)
 
-    # Clip for display only
     rgb = np.clip(rgb * 255, 0, 255).astype(np.uint8)
     pil_img = Image.fromarray(rgb)
 
@@ -147,10 +238,10 @@ def numpy_to_png_bytes(img: np.ndarray) -> bytes:
 def generate_multi_spectral_views(img: np.ndarray) -> dict:
     """
     Generate multiple spectral representations for satellite analysis:
-    - RGB: True Color (Bands 4, 3, 2 -> R, G, B)
-    - CIR: Color Infrared / False Color (Bands 8, 4, 3 -> NIR, R, G)
-    - NDVI: Normalized Difference Vegetation Index (NIR - Red) / (NIR + Red)
-    - Red, Green, Blue, NIR: Individual single-band heatmaps
+    - RGB: True Color (B4 Red, B3 Green, B2 Blue)
+    - CIR: Color Infrared / False Color (B8 NIR, B4 Red, B3 Green)
+    - NDVI: Normalized Difference Vegetation Index (B8 - B4) / (B8 + B4 + 1e-7)
+    - B2, B3, B4, B8: Individual single-band heatmaps
     """
     import base64
     import matplotlib.pyplot as plt
@@ -158,30 +249,42 @@ def generate_multi_spectral_views(img: np.ndarray) -> dict:
     views = {}
     c, h, w = img.shape
 
-    # 1. True Color (RGB)
-    if c >= 3:
-        rgb = np.clip(img[:3].transpose(1, 2, 0) * 255, 0, 255).astype(np.uint8)
-        p = Image.fromarray(rgb)
-        b = io.BytesIO()
-        p.save(b, format="PNG")
-        views["rgb"] = "data:image/png;base64," + base64.b64encode(b.getvalue()).decode("utf-8")
-
-    # 2. Color Infrared (CIR) & NDVI if NIR band (band 3) exists
+    # 1. True Color (RGB: R=B4, G=B3, B=B2)
     if c >= 4:
-        # CIR: NIR (band 3) -> R, Red (band 0) -> G, Green (band 1) -> B
-        cir = np.stack([img[3], img[0], img[1]], axis=-1)
-        cir = np.clip(cir * 255, 0, 255).astype(np.uint8)
-        p = Image.fromarray(cir)
-        b = io.BytesIO()
-        p.save(b, format="PNG")
-        views["cir"] = "data:image/png;base64," + base64.b64encode(b.getvalue()).decode("utf-8")
+        rgb = np.stack([
+            img[BAND_INDEX["B4"]],
+            img[BAND_INDEX["B3"]],
+            img[BAND_INDEX["B2"]],
+        ], axis=-1)
+    elif c == 3:
+        rgb = img.transpose(1, 2, 0)
+    else:
+        rgb = np.stack([img[0]] * 3, axis=-1)
 
-        # NDVI: (NIR - Red) / (NIR + Red)
-        nir = img[3]
-        red = img[0]
+    rgb_disp = np.clip(rgb * 255, 0, 255).astype(np.uint8)
+    p = Image.fromarray(rgb_disp)
+    b = io.BytesIO()
+    p.save(b, format="PNG")
+    views["rgb"] = "data:image/png;base64," + base64.b64encode(b.getvalue()).decode("utf-8")
+
+    # 2. Color Infrared (CIR: R=B8, G=B4, B=B3) & NDVI if at least 4 bands
+    if c >= 4:
+        cir = np.stack([
+            img[BAND_INDEX["B8"]],
+            img[BAND_INDEX["B4"]],
+            img[BAND_INDEX["B3"]],
+        ], axis=-1)
+        cir_disp = np.clip(cir * 255, 0, 255).astype(np.uint8)
+        p_cir = Image.fromarray(cir_disp)
+        b_cir = io.BytesIO()
+        p_cir.save(b_cir, format="PNG")
+        views["cir"] = "data:image/png;base64," + base64.b64encode(b_cir.getvalue()).decode("utf-8")
+
+        # NDVI: (B8 - B4) / (B8 + B4 + 1e-7)
+        nir = img[BAND_INDEX["B8"]]
+        red = img[BAND_INDEX["B4"]]
         denom = nir + red + 1e-7
         ndvi = (nir - red) / denom
-        # Normalize typical NDVI [-0.2, 0.85] to [0, 1]
         ndvi_norm = np.clip((ndvi + 0.2) / 1.05, 0.0, 1.0)
         cmap_ndvi = plt.get_cmap("RdYlGn")
         rgba_ndvi = (cmap_ndvi(ndvi_norm)[:, :, :3] * 255).astype(np.uint8)
@@ -190,16 +293,24 @@ def generate_multi_spectral_views(img: np.ndarray) -> dict:
         p_ndvi.save(b_ndvi, format="PNG")
         views["ndvi"] = "data:image/png;base64," + base64.b64encode(b_ndvi.getvalue()).decode("utf-8")
 
-    # 3. Individual Bands (Red, Green, Blue, NIR)
-    band_names = ["red", "green", "blue", "nir"] if c >= 4 else ["band_0", "band_1", "band_2"]
+    # 3. Individual Bands (B2 Blue, B3 Green, B4 Red, B8 NIR)
+    band_keys = ["B2", "B3", "B4", "B8"] if c >= 4 else [f"band_{i}" for i in range(c)]
     cmap_bone = plt.get_cmap("bone")
-    for idx, name in enumerate(band_names[:c]):
+    for idx, key in enumerate(band_keys[:c]):
         b_norm = np.clip(img[idx], 0.0, 1.0)
         b_colored = (cmap_bone(b_norm)[:, :, :3] * 255).astype(np.uint8)
-        p = Image.fromarray(b_colored)
-        b = io.BytesIO()
-        p.save(b, format="PNG")
-        views[name] = "data:image/png;base64," + base64.b64encode(b.getvalue()).decode("utf-8")
+        p_b = Image.fromarray(b_colored)
+        buf_b = io.BytesIO()
+        p_b.save(buf_b, format="PNG")
+        name = key.lower() if key in ["B2", "B3", "B4", "B8"] else f"band_{idx}"
+        views[name] = "data:image/png;base64," + base64.b64encode(buf_b.getvalue()).decode("utf-8")
+
+    # Map standard named aliases for frontend tabs:
+    if c >= 4:
+        views["blue"] = views.get("b2", views.get("band_0"))
+        views["green"] = views.get("b3", views.get("band_1"))
+        views["red"] = views.get("b4", views.get("band_2"))
+        views["nir"] = views.get("b8", views.get("band_3"))
 
     return views
 
@@ -210,7 +321,7 @@ def export_geotiff_bytes(img: np.ndarray, geo_metadata: dict = None, scale_facto
     Preserves exact float32 physical reflectance values and geospatial metadata.
 
     CRITICAL RULES:
-    - Never fabricate coordinates or CRS (no EPSG:4326 Delhi fallbacks).
+    - Never fabricate coordinates or CRS.
     - If no geospatial metadata exists, raises ValueError stating 'No geospatial reference available'.
     - For 4x SR: output pixel size = input pixel size / scale_factor; affine transform is scaled accordingly.
     """
@@ -231,7 +342,6 @@ def export_geotiff_bytes(img: np.ndarray, geo_metadata: dict = None, scale_facto
 
     # Recalculate affine transform for SR:
     # Input pixel size = p -> Output pixel size = p / scale_factor
-    # Affine(a, b, c, d, e, f): a (dx) and e (dy) are pixel resolutions; c and f are origin coordinates.
     in_affine = Affine(*raw_transform[:6])
     out_affine = Affine(
         in_affine.a / scale_factor,
@@ -270,5 +380,3 @@ def export_geotiff_bytes(img: np.ndarray, geo_metadata: dict = None, scale_facto
                 spectral_bands="B2, B3, B4, B8 (Selected 4-band subset of Sentinel-2)",
             )
         return bytes(memfile.getbuffer())
-
-

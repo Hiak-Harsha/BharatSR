@@ -71,18 +71,24 @@ def test_real_sentinel2_sample():
 
 
 def test_image_normalization_no_imagenet():
-    """Verify normalization does NOT apply ImageNet mean/std."""
-    # Create an 8-bit synthetic RGB image
-    fake_png_bytes = b"\x89PNG\r\n\x1a\n"  # Just header
-    # Test with simulated 16-bit Sentinel-2 DN values (> 10000)
+    """Verify normalization does NOT apply ImageNet mean/std, and rejects unmapped 3-band inputs."""
     import io
     from PIL import Image
 
+    # 1. 3-band image without mapping must be rejected (no zero padding)
     arr_8bit = (np.random.rand(64, 64, 3) * 255).astype(np.uint8)
     buf = io.BytesIO()
     Image.fromarray(arr_8bit).save(buf, format="PNG")
-    norm_img, geo_meta = load_image_from_bytes(buf.getvalue())
+    
+    with pytest.raises(ValueError, match="Sentinel-2 model requires B2/B3/B4/B8"):
+        load_image_from_bytes(buf.getvalue())
 
-    assert norm_img.shape[0] == 4, "Should be padded to 4 bands (RGB + NIR placeholder)"
+    # 2. With explicit band_mapping, 8-bit image scales to [0, 1] without ImageNet mean/std
+    mapping = {"B2": 0, "B3": 1, "B4": 2, "B8": 1}
+    norm_img, geo_meta = load_image_from_bytes(buf.getvalue(), band_mapping=mapping)
+    assert norm_img.shape[0] == 4
     assert norm_img.max() <= 1.0 + 1e-4
     assert norm_img.min() >= 0.0
+    # Confirm no ImageNet standardization (which produces negative values around -2.0)
+    assert norm_img.min() >= 0.0
+

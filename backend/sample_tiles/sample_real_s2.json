@@ -33,7 +33,8 @@
   "gsd": "10.0m",
   "preprocessing_level": "Level-2A BOA Surface Reflectance",
   "cloud_percentage": 0.02,
-  "hr_source": "Co-registered High-Resolution Reference Grid",
-  "hr_acquisition_metadata": "WorldView-3 Resampled 2.5m Grid",
-  "alignment_quality": "Sub-pixel co-registered (<0.15 px RMSE)"
+  "hr_source": "Sentinel-2 demonstration sample with bicubic-derived reference",
+  "is_independent_hr": false,
+  "reference_type": "demonstration_bicubic_derived",
+  "alignment_note": "Demonstration reference grid derived from Sentinel-2 L2A sensor data; not an independent high-resolution observation."
 }

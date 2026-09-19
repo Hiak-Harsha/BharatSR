@@ -36,13 +36,13 @@ from backend.app.services.inference import (
 )
 from backend.app.services.preprocessing import (
     load_image_from_bytes, load_sample_tile, numpy_to_png_bytes,
-    generate_multi_spectral_views, export_geotiff_bytes
+    generate_multi_spectral_views, export_geotiff_bytes, BAND_INDEX
 )
 from backend.app.services.postprocessing import compute_inference_metrics
 from backend.app.services.job_store import JobStore
 from backend.app.models_ml.uncertainty import generate_uncertainty_heatmap, summarize_uncertainty
 from evaluation.downstream_task import (
-    segment_micro_canopy, segment_built_up_infrastructure, compute_segmentation_metrics
+    segment_micro_canopy_rule_based, segment_built_up_rule_based, compute_segmentation_metrics
 )
 
 
@@ -169,7 +169,7 @@ def _load_input_data(sample_id: Optional[str], file_bytes: Optional[bytes]) -> T
             lr_image, geo_metadata = load_image_from_bytes(file_bytes)
             return lr_image, None, geo_metadata
         except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            raise HTTPException(status_code=422, detail=str(e))
     else:
         raise HTTPException(status_code=400, detail="Provide either 'file' or 'sample_id'")
 
@@ -295,9 +295,18 @@ def _async_worker(job_id: str, sample_id: Optional[str], file_bytes: Optional[by
         with open(payload_path, "w") as f:
             json.dump(result, f)
 
-        # Save numpy array for export
+        # Save numpy array and geospatial metadata for export
         npz_path = RUNS_DIR / f"{job_id}.npz"
-        np.savez_compressed(str(npz_path), sr=sr_array, lr=lr_image)
+        np.savez_compressed(
+            str(npz_path),
+            sr=sr_array,
+            lr=lr_image,
+            hr=hr_image if hr_image is not None else np.zeros((0,), dtype=np.float32),
+            has_hr=hr_image is not None,
+            geo_json=json.dumps(geo_metadata) if geo_metadata else "",
+            model_id=model_id,
+            scale_factor=scale_factor,
+        )
 
         job_store.update_job(
             job_id,
@@ -668,12 +677,12 @@ async def pixel_profile(
     # Compute bicubic baseline for pixel inspector comparison
     bicubic_arr, _ = run_bicubic_baseline(lr_image, scale_factor=scale_factor)
 
-    # Bands ordering: Red=0, Green=1, Blue=2, NIR=3
+    # Bands ordering: B2=0, B3=1, B4=2, B8=3
     spectral_order = [
-        {"name": "Blue", "band": "B2", "wavelength_nm": 490, "idx": 2},
-        {"name": "Green", "band": "B3", "wavelength_nm": 560, "idx": 1},
-        {"name": "Red", "band": "B4", "wavelength_nm": 665, "idx": 0},
-        {"name": "Near-IR", "band": "B8", "wavelength_nm": 842, "idx": 3},
+        {"name": "Blue", "band": "B2", "wavelength_nm": 490, "idx": BAND_INDEX["B2"]},
+        {"name": "Green", "band": "B3", "wavelength_nm": 560, "idx": BAND_INDEX["B3"]},
+        {"name": "Red", "band": "B4", "wavelength_nm": 665, "idx": BAND_INDEX["B4"]},
+        {"name": "Near-IR", "band": "B8", "wavelength_nm": 842, "idx": BAND_INDEX["B8"]},
     ]
 
     bands_data = []
@@ -713,31 +722,35 @@ async def pixel_profile(
             spectral_angle = round(float(np.degrees(np.arccos(cos_theta))), 2)
 
     # Pointwise NDVI = (NIR - Red) / (NIR + Red)
-    red_sr, nir_sr = float(sr_array[0, y, x]), float(sr_array[3, y, x])
-    red_lr, nir_lr = float(lr_image[0, y_lr, x_lr]), float(lr_image[3, y_lr, x_lr])
-    red_bic, nir_bic = float(bicubic_arr[0, y, x]), float(bicubic_arr[3, y, x])
+    red_sr = float(sr_array[BAND_INDEX["B4"], y, x])
+    nir_sr = float(sr_array[BAND_INDEX["B8"], y, x])
+    red_lr = float(lr_image[BAND_INDEX["B4"], y_lr, x_lr])
+    nir_lr = float(lr_image[BAND_INDEX["B8"], y_lr, x_lr])
+    red_bic = float(bicubic_arr[BAND_INDEX["B4"], y, x])
+    nir_bic = float(bicubic_arr[BAND_INDEX["B8"], y, x])
 
     ndvi_sr = (nir_sr - red_sr) / (nir_sr + red_sr + 1e-7)
     ndvi_lr = (nir_lr - red_lr) / (nir_lr + red_lr + 1e-7)
     ndvi_bic = (nir_bic - red_bic) / (nir_bic + red_bic + 1e-7)
     ndvi_hr = None
-    if hr_image is not None:
-        red_hr, nir_hr = float(hr_image[0, y, x]), float(hr_image[3, y, x])
+    if hr_image is not None and hr_image.shape[0] >= 4:
+        red_hr = float(hr_image[BAND_INDEX["B4"], y, x])
+        nir_hr = float(hr_image[BAND_INDEX["B8"], y, x])
         ndvi_hr = (nir_hr - red_hr) / (nir_hr + red_hr + 1e-7)
 
     # Rule-based spectral interpretation (clearly disclaimed, not ground truth)
     if ndvi_sr > 0.4:
-        surface_type = "Dense Vegetation / Crop Canopy"
-        signature_note = "Steep red edge with high NIR cellular scattering plateau."
+        surface_type = "Rule-based: Dense Vegetation / Crop Canopy"
+        signature_note = "Steep red edge with high NIR cellular scattering plateau (rule-based interpretation, not ground truth)."
     elif ndvi_sr > 0.15:
-        surface_type = "Sparse Scrub / Mixed Soil-Vegetation"
-        signature_note = "Moderate red-NIR slope typical of arid/semi-arid terrain."
+        surface_type = "Rule-based: Sparse Scrub / Mixed Soil-Vegetation"
+        signature_note = "Moderate red-NIR slope typical of semi-arid terrain (rule-based interpretation, not ground truth)."
     elif nir_sr < 0.08:
-        surface_type = "Water Body / Deep Shadow"
-        signature_note = "High absorption across visible and near-infrared spectrum."
+        surface_type = "Rule-based: Water Body / Deep Shadow"
+        signature_note = "High absorption across visible and near-infrared spectrum (rule-based interpretation, not ground truth)."
     else:
-        surface_type = "Built-up Urban / High-Albedo Road/Sand"
-        signature_note = "Relatively flat visible-to-NIR reflectance curve."
+        surface_type = "Rule-based: Built-up Urban / High-Albedo Ground"
+        signature_note = "Relatively flat visible-to-NIR reflectance curve (rule-based interpretation, not ground truth)."
 
     return PixelProfileResponse(
         status="success",
@@ -799,15 +812,15 @@ async def downstream_masks(
 
     tasks_config = {
         "canopy_segmentation": {
-            "name": "Micro-Canopy Vegetation Segmentation",
-            "description": "Delineates agricultural plots and vegetation canopy using NDVI > 0.35",
-            "fn": segment_micro_canopy,
+            "name": "Micro-Canopy Vegetation Segmentation (Rule-Based)",
+            "description": "Rule-based spectral interpretation: Delineates vegetation canopy using NDVI > 0.35",
+            "fn": segment_micro_canopy_rule_based,
             "color": (34, 197, 94),  # Emerald Green
         },
         "built_up_infrastructure": {
-            "name": "Built-up Infrastructure Extraction",
-            "description": "Extracts road networks and urban structures using high visible albedo & low contrast",
-            "fn": segment_built_up_infrastructure,
+            "name": "Built-up Infrastructure Extraction (Rule-Based)",
+            "description": "Rule-based spectral interpretation: Extracts candidate built-up areas using albedo & contrast",
+            "fn": segment_built_up_rule_based,
             "color": (249, 115, 22),  # Amber Orange
         },
     }

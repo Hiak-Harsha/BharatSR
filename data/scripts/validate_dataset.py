@@ -5,16 +5,18 @@ Validates dataset integrity before training and benchmark evaluation:
 - Verifies LR and HR dimensions and exact scale factor (4x)
 - Measures physical reflectance range [0, ~1+] without clipping bright targets
 - Checks invalid pixels, nodata percentage, and cloud mask fraction
-- Quantifies spatial alignment error (cross-correlation RMSE)
-- Quantifies spectral alignment error (mean SAM angle)
+- Quantifies spatial alignment error (cross-correlation and downsample RMSE)
+- Quantifies spectral alignment error (mean SAM angle in degrees)
 - Checks CRS and transform consistency
-- Generates visual QA reports (LR, HR, LR-upsampled, difference, spectral curves, histograms)
+- Validates scene-separated manifests (data/manifests/)
+- Generates visual QA reports (LR True-Color, HR True-Color, Difference map, Spectral Curves, Histograms)
 """
 
 import sys
 import os
 import argparse
 from pathlib import Path
+from typing import Dict, Optional
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -26,13 +28,22 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from training.losses import degrade_canonical_4x, compute_sam
 
+BAND_INDEX = {
+    "B2": 0,
+    "B3": 1,
+    "B4": 2,
+    "B8": 3,
+}
+BAND_NAMES = ["B2 (Blue)", "B3 (Green)", "B4 (Red)", "B8 (NIR)"]
+BAND_WAVELENGTHS_NM = [490, 560, 665, 842]
+
 
 def validate_dataset(
     data_path: Path,
-    qa_output_dir: Path = None,
+    qa_output_dir: Optional[Path] = None,
     scale_factor: int = 4,
     verbose: bool = True,
-) -> dict:
+) -> Dict[str, any]:
     if not data_path.exists():
         print(f"[FAIL] Dataset file not found: {data_path}")
         return {"valid": False, "error": f"File not found: {data_path}"}
@@ -79,7 +90,7 @@ def validate_dataset(
     total_pixels = float(lr_patches.size)
     invalid_pct = round(((nan_count + inf_count + negative_count) / total_pixels) * 100.0, 4)
 
-    # 4. Nodata percentage (values == -9999 or 0 across all bands)
+    # 4. Nodata percentage (0 across all bands)
     nodata_pixels = int(np.all(lr_patches == 0, axis=1).sum())
     nodata_pct = round((nodata_pixels / (n_patches * lr_h * lr_w)) * 100.0, 3)
 
@@ -87,7 +98,7 @@ def validate_dataset(
     cloud_pixels = int((lr_patches > 1.0).sum())
     cloud_pct = round((cloud_pixels / total_pixels) * 100.0, 3)
 
-    # 6. Spatial alignment error (cross-correlation check on canonical downsampling)
+    # 6. Spatial alignment error (canonical downsampling check)
     sample_indices = range(min(5, n_patches))
     spatial_errors = []
     spectral_angles = []
@@ -108,7 +119,19 @@ def validate_dataset(
     mean_spatial_alignment_err = round(float(np.mean(spatial_errors)), 6)
     mean_spectral_angle_err = round(float(np.mean(spectral_angles)), 2)
 
-    # Reject if spatial alignment error exceeds tolerance
+    # Check for scene manifests
+    manifest_path = PROJECT_ROOT / "data" / "manifests" / f"{data_path.stem}.csv"
+    manifest_scenes = 0
+    if manifest_path.exists():
+        try:
+            import csv
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                reader = csv.reader(f)
+                next(reader, None)  # header
+                manifest_scenes = sum(1 for _ in reader)
+        except Exception:
+            pass
+
     is_spatially_aligned = bool(mean_spatial_alignment_err < 0.05)
     is_valid = bool(invalid_pct == 0.0 and is_spatially_aligned)
 
@@ -116,10 +139,13 @@ def validate_dataset(
         "valid": is_valid,
         "dataset_file": str(data_path.name),
         "number_of_patches": n_patches,
+        "scene_count": manifest_scenes if manifest_scenes > 0 else "N/A (manifest missing)",
         "band_count": n_bands,
+        "bands": BAND_NAMES,
         "lr_dimensions": [lr_h, lr_w],
         "hr_dimensions": [hr_h, hr_w],
         "scale_factor": scale_factor,
+        "gsd": "10.0m LR -> 2.5m-equivalent HR grid",
         "reflectance_min": round(ref_min, 4),
         "reflectance_max": round(ref_max, 4),
         "reflectance_mean": round(ref_mean, 4),
@@ -137,13 +163,15 @@ def validate_dataset(
         print("============================================================")
         print(f" BharatSR Dataset Scientific Validation: {data_path.name}")
         print("============================================================")
+        print(f" Scene Count:          {report['scene_count']}")
         print(f" Patches:              {n_patches} pairs")
         print(f" Band Count:           {n_bands} (B2 Blue, B3 Green, B4 Red, B8 NIR)")
         print(f" Grid Size:            LR [{lr_h}x{lr_w}] -> HR [{hr_h}x{hr_w}] ({scale_factor}x)")
-        print(f" Physical Reflectance: Min={ref_min:.4f}, Mean={ref_mean:.4f}, Max={ref_max:.4f}")
+        print(f" GSD:                  10.0m LR -> 2.5m-equivalent HR grid")
+        print(f" Physical Reflectance: Min={ref_min:.4f}, Mean={ref_mean:.4f}, Max={ref_max:.4f}, Std={ref_std:.4f}")
         print(f" Invalid Pixels:       {invalid_pct:.4f}% (NaN/Inf/Negatives)")
         print(f" Nodata Pixels:        {nodata_pct:.3f}%")
-        print(f" Bright/Cloud Pixels:  {cloud_pct:.3f}% (> 1.0 BOA reflectance)")
+        print(f" Cloud / High Albedo:  {cloud_pct:.3f}% (> 1.0 BOA reflectance)")
         print(f" Spatial Alignment:    MAE = {mean_spatial_alignment_err:.6f} [D(HR) vs LR]")
         print(f" Spectral Alignment:   SAM = {mean_spectral_angle_err:.2f}°")
         print(f" Status:               {'[PASS] VALID' if is_valid else '[FAIL] REJECTED'}")
@@ -160,14 +188,14 @@ def validate_dataset(
 def generate_qa_visualizations(lr: np.ndarray, hr: np.ndarray, output_dir: Path, name: str):
     """
     Generates visual QA reports:
-    LR True-Color, HR True-Color, LR-upsampled, Difference map, Spectral Curves, and Histograms.
+    LR True-Color (B4, B3, B2), HR True-Color (B4, B3, B2), Difference map, Spectral Curves, and Histograms.
     """
     scale = hr.shape[1] // lr.shape[1]
     from scipy.ndimage import zoom
 
-    # RGB representations (Bands 0, 1, 2)
-    lr_rgb = np.clip(lr[:3].transpose(1, 2, 0), 0.0, 1.0)
-    hr_rgb = np.clip(hr[:3].transpose(1, 2, 0), 0.0, 1.0)
+    # True Color: R=B4 (index 2), G=B3 (index 1), B=B2 (index 0)
+    lr_rgb = np.clip(np.stack([lr[BAND_INDEX["B4"]], lr[BAND_INDEX["B3"]], lr[BAND_INDEX["B2"]]], axis=-1), 0.0, 1.0)
+    hr_rgb = np.clip(np.stack([hr[BAND_INDEX["B4"]], hr[BAND_INDEX["B3"]], hr[BAND_INDEX["B2"]]], axis=-1), 0.0, 1.0)
     lr_up_rgb = np.clip(zoom(lr_rgb, (scale, scale, 1), order=1), 0.0, 1.0)
     diff_rgb = np.abs(hr_rgb - lr_up_rgb)
 
@@ -175,7 +203,7 @@ def generate_qa_visualizations(lr: np.ndarray, hr: np.ndarray, output_dir: Path,
     fig.suptitle(f"BharatSR Dataset Quality Assurance (QA) Report — {name}", fontsize=14, fontweight="bold")
 
     axes[0, 0].imshow(lr_rgb)
-    axes[0, 0].set_title(f"1. LR Sensor Input ({lr.shape[1]}x{lr.shape[2]})")
+    axes[0, 0].set_title(f"1. LR Sensor True Color B4/B3/B2 ({lr.shape[1]}x{lr.shape[2]})")
     axes[0, 0].axis("off")
 
     axes[0, 1].imshow(lr_up_rgb)
@@ -192,24 +220,22 @@ def generate_qa_visualizations(lr: np.ndarray, hr: np.ndarray, output_dir: Path,
     plt.colorbar(im_diff, ax=axes[1, 0], fraction=0.046, pad=0.04)
 
     # 5. Spectral Profiles across 4 bands
-    bands_nm = [490, 560, 665, 842]
-    band_names = ["B2 (Blue)", "B3 (Green)", "B4 (Red)", "B8 (NIR)"]
-    lr_means = [np.mean(lr[b]) for b in range(4)]
-    hr_means = [np.mean(hr[b]) for b in range(4)]
+    lr_means = [float(np.mean(lr[b])) for b in range(4)]
+    hr_means = [float(np.mean(hr[b])) for b in range(4)]
 
-    axes[1, 1].plot(bands_nm, lr_means, "o--", color="#00bcd4", label="LR Mean Reflectance", linewidth=2)
-    axes[1, 1].plot(bands_nm, hr_means, "s-", color="#ff9800", label="HR Mean Reflectance", linewidth=2)
-    axes[1, 1].set_xticks(bands_nm)
-    axes[1, 1].set_xticklabels(band_names, rotation=25, fontsize=8)
+    axes[1, 1].plot(BAND_WAVELENGTHS_NM, lr_means, "o--", color="#00bcd4", label="LR Mean Reflectance", linewidth=2)
+    axes[1, 1].plot(BAND_WAVELENGTHS_NM, hr_means, "s-", color="#ff9800", label="HR Mean Reflectance", linewidth=2)
+    axes[1, 1].set_xticks(BAND_WAVELENGTHS_NM)
+    axes[1, 1].set_xticklabels(BAND_NAMES, rotation=25, fontsize=8)
     axes[1, 1].set_ylabel("Surface Reflectance [0, 1]")
     axes[1, 1].set_title("5. Spectral Reflectance Curves")
     axes[1, 1].grid(True, linestyle="--", alpha=0.5)
     axes[1, 1].legend()
 
     # 6. Multi-band Histograms
-    colors = ["blue", "green", "red", "purple"]
+    colors = ["#2196f3", "#4caf50", "#f44336", "#9c27b0"]
     for b in range(4):
-        axes[1, 2].hist(hr[b].flatten(), bins=40, range=(0.0, 1.0), color=colors[b], alpha=0.35, label=band_names[b])
+        axes[1, 2].hist(hr[b].flatten(), bins=40, range=(0.0, 1.0), color=colors[b], alpha=0.35, label=BAND_NAMES[b])
     axes[1, 2].set_title("6. HR Physical Reflectance Histograms")
     axes[1, 2].set_xlabel("Reflectance")
     axes[1, 2].set_ylabel("Pixel Count")
@@ -218,36 +244,33 @@ def generate_qa_visualizations(lr: np.ndarray, hr: np.ndarray, output_dir: Path,
 
     plt.tight_layout()
     qa_path = output_dir / f"qa_report_{name}.png"
-    plt.savefig(str(qa_path), dpi=150)
-    plt.close()
-    print(f"  Visual QA Report saved to: {qa_path}")
+    fig.savefig(str(qa_path), dpi=150)
+    plt.close(fig)
+    print(f"Visual QA saved to {qa_path}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="BharatSR Dataset Validation Tool")
-    parser.add_argument("--data", type=str, default="data/processed", help="Path to .npz dataset file or directory")
-    parser.add_argument("--qa-dir", type=str, default="reports/qa", help="Output directory for visual QA reports")
-    parser.add_argument("--scale", type=int, default=4, help="Expected scale factor")
+    parser = argparse.ArgumentParser(description="Validate BharatSR training and test datasets")
+    parser.add_argument("--split", type=str, default="test", choices=["train", "val", "test", "all"],
+                        help="Dataset split to validate (default: test)")
+    parser.add_argument("--qa-dir", type=str, default="data/visualizations/qa",
+                        help="Output directory for visual QA reports")
+    parser.add_argument("--scale", type=int, default=4, help="Expected scale factor (default: 4)")
     args = parser.parse_args()
 
-    target_path = PROJECT_ROOT / args.data
-    qa_dir = PROJECT_ROOT / args.qa_dir if args.qa_dir else None
+    data_dir = PROJECT_ROOT / "data" / "processed"
+    qa_dir = PROJECT_ROOT / args.qa_dir
 
-    if target_path.is_dir():
-        npz_files = list(target_path.glob("*.npz"))
-        if not npz_files:
-            print(f"No .npz files found in {target_path}")
-            sys.exit(1)
-        all_valid = True
-        for f in npz_files:
-            print(f"\nValidating {f.name}...")
-            res = validate_dataset(f, qa_output_dir=qa_dir, scale_factor=args.scale)
-            if not res["valid"]:
-                all_valid = False
-        sys.exit(0 if all_valid else 1)
-    else:
-        result = validate_dataset(target_path, qa_output_dir=qa_dir, scale_factor=args.scale)
-        sys.exit(0 if result["valid"] else 1)
+    splits = ["train", "val", "test"] if args.split == "all" else [args.split]
+    all_valid = True
+
+    for s in splits:
+        npz_file = data_dir / f"{s}.npz"
+        res = validate_dataset(npz_file, qa_output_dir=qa_dir, scale_factor=args.scale)
+        if not res.get("valid", False):
+            all_valid = False
+
+    sys.exit(0 if all_valid else 1)
 
 
 if __name__ == "__main__":

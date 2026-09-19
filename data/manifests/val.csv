@@ -1,0 +1,4 @@
+scene_id,lr_product,hr_product,region,date,gsd,cloud_fraction,registration_rmse
+scene_0,SYNTH_S2_SCENE_000,SYNTH_HR_REF_000,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
+scene_8,SYNTH_S2_SCENE_008,SYNTH_HR_REF_008,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
+scene_16,SYNTH_S2_SCENE_016,SYNTH_HR_REF_016,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0

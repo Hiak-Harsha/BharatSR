@@ -1,0 +1,55 @@
+{
+  "dataset_file": "test.npz",
+  "evaluation_count": 3,
+  "accepted_count": 0,
+  "rejected_count": 3,
+  "mean_registration_rmse_px": 1.4142,
+  "mean_registration_rmse_m": 14.14,
+  "max_allowed_rmse_px": 0.5,
+  "spectral_band_correspondence": {
+    "B2": "Blue (490nm)",
+    "B3": "Green (560nm)",
+    "B4": "Red (665nm)",
+    "B8": "NIR (842nm)"
+  },
+  "scientific_limitations": {
+    "spectral_mismatch": "Sensors may have distinct Spectral Response Functions (SRF) causing minor radiometric variance.",
+    "temporal_mismatch": "Acquisition time delta can introduce illumination, solar zenith, and phonological variations.",
+    "resampling": "Bicubic / cubic convolution resampling of reference grids introduces high-frequency smoothing."
+  },
+  "pairs_detail": [
+    {
+      "dx_pixels": -1.0,
+      "dy_pixels": -1.0,
+      "rmse_pixels": 1.4142,
+      "rmse_meters": 14.14,
+      "peak_cross_correlation": 1.0,
+      "downsample_residual_mae": 0.0,
+      "spectral_angle_error_deg": 0.0,
+      "pair_index": 0,
+      "status": "REJECTED"
+    },
+    {
+      "dx_pixels": -1.0,
+      "dy_pixels": -1.0,
+      "rmse_pixels": 1.4142,
+      "rmse_meters": 14.14,
+      "peak_cross_correlation": 1.0,
+      "downsample_residual_mae": 0.0,
+      "spectral_angle_error_deg": 0.0,
+      "pair_index": 1,
+      "status": "REJECTED"
+    },
+    {
+      "dx_pixels": -1.0,
+      "dy_pixels": -1.0,
+      "rmse_pixels": 1.4142,
+      "rmse_meters": 14.14,
+      "peak_cross_correlation": 1.0,
+      "downsample_residual_mae": 0.0,
+      "spectral_angle_error_deg": 0.0,
+      "pair_index": 2,
+      "status": "REJECTED"
+    }
+  ]
+}

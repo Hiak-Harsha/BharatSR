@@ -115,3 +115,15 @@ def test_validate_geotiff_tool_passes_valid_file(tmp_path):
         f.write(geotiff_bytes)
 
     assert validate_geotiff(out_file) is True
+
+
+def test_end_to_end_geotiff_roundtrip(tmp_path):
+    """
+    Automated GeoTIFF round-trip verification:
+    Input: 10m Sentinel-2 GeoTIFF (64x64, EPSG:32643)
+    Output: 2.5m GeoTIFF (256x256, EPSG:32643) with identical geographic bounding box.
+    """
+    from tools.test_geotiff_roundtrip import verify_geotiff_roundtrip
+    tif_path = PROJECT_ROOT / "backend" / "sample_tiles" / "sample_real_s2.tif"
+    assert verify_geotiff_roundtrip(str(tif_path)) is True
+

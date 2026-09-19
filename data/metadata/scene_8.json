@@ -17,5 +17,6 @@
   "reflectance_range": [
     0.034231189638376236,
     0.804929792881012
-  ]
+  ],
+  "registration_rmse": 0.0
 }
