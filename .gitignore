@@ -45,7 +45,11 @@ Thumbs.db
 .env
 .env*.local
 
+# Internal Notes & Audits
+internal-notes/
+
 # Archives
 *.zip
 *.tar.gz
+
 

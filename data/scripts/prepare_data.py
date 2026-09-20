@@ -61,7 +61,7 @@ def try_load_opensr(dataset_name: str):
         return None
 
 
-def generate_synthetic_pairs(n_scenes=24, lr_size=64, scale=4, n_bands=4):
+def generate_synthetic_pairs(n_scenes=200, lr_size=64, scale=4, n_bands=4):
     """
     Explicitly requested synthetic LR/HR pairs for pipeline development and testing.
     Uses structured patterns with known band values.
@@ -102,13 +102,8 @@ def generate_synthetic_pairs(n_scenes=24, lr_size=64, scale=4, n_bands=4):
             bright_x, bright_y = np.random.randint(0, hr_size, 2)
             hr[:, bright_x:bright_x + 5, bright_y:bright_y + 5] = 1.05 + 0.1 * np.random.rand()
 
-        # Canonical area-averaging degradation
-        lr = np.zeros((n_bands, lr_size, lr_size), dtype=np.float32)
-        for b in range(n_bands):
-            for i_lr in range(lr_size):
-                for j_lr in range(lr_size):
-                    i_start, j_start = i_lr * scale, j_lr * scale
-                    lr[b, i_lr, j_lr] = hr[b, i_start:i_start + scale, j_start:j_start + scale].mean()
+        # Vectorized canonical area-averaging degradation (exact 2D box filter)
+        lr = hr.reshape(n_bands, lr_size, scale, lr_size, scale).mean(axis=(2, 4)).astype(np.float32)
 
         scenes.append({
             "lr": lr,
@@ -283,7 +278,7 @@ def save_manifest_csv(manifest_path: Path, scenes: list):
             ])
 
 
-def prepare_dataset(lr_patch_size=64, scale=4, augment=True, force_synthetic=False, seed=42):
+def prepare_dataset(lr_patch_size=64, scale=4, n_scenes=200, augment=True, force_synthetic=False, seed=42):
     """
     Main data preparation pipeline.
     If real data is unavailable and force_synthetic is False, FAILS loudly.
@@ -312,7 +307,7 @@ def prepare_dataset(lr_patch_size=64, scale=4, augment=True, force_synthetic=Fal
             )
         print("\n*** Generating synthetic development data (--synthetic explicitly passed) ***\n")
         all_scenes = generate_synthetic_pairs(
-            n_scenes=24, lr_size=lr_patch_size, scale=scale
+            n_scenes=n_scenes, lr_size=lr_patch_size, scale=scale
         )
         is_synthetic = True
     else:
@@ -409,6 +404,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="BharatSR Data Preparation Pipeline")
     parser.add_argument("--synthetic", action="store_true", help="Explicitly enable synthetic dataset generation without network downloads")
+    parser.add_argument("--n-scenes", type=int, default=200, help="Number of synthetic scenes to generate (default: 200)")
     parser.add_argument("--lr-patch-size", type=int, default=64, help="LR patch size (default: 64)")
     parser.add_argument("--scale", type=int, default=4, help="Super-resolution scale factor (default: 4)")
     parser.add_argument("--no-augment", action="store_true", help="Disable patch augmentation")
@@ -417,6 +413,7 @@ if __name__ == "__main__":
     prepare_dataset(
         lr_patch_size=args.lr_patch_size,
         scale=args.scale,
+        n_scenes=args.n_scenes,
         augment=not args.no_augment,
         force_synthetic=args.synthetic
     )

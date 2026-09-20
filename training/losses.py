@@ -465,6 +465,7 @@ def compute_hallucination_and_correctness(
         "missing_edge_rate": round(missing_edge_rate, 4),
         "high_frequency_excess_rate": round(hf_excess_rate, 4),
         "high_freq_hallucination_rate": round(hf_excess_rate, 4),
+        "hallucination_rate": round(hf_excess_rate, 4),
         "consistency_score": round(consistency_score, 4),
         "correctness_score": round(correctness_score, 4),
         "synthesis_score": round(synthesis_score, 4),

@@ -209,3 +209,53 @@ def test_endpoint_run_caching_and_run_id_geotiff(client):
     px_data = px_resp.json()
     assert px_data["run_id"] == run_id
     assert len(px_data["bands_data"]) == 4
+
+
+def test_upload_sample_real_s2_infer_export_reopen(client):
+    """
+    End-to-end integration test:
+    1. Upload authentic Sentinel-2 GeoTIFF (sample_real_s2.tif)
+    2. Infer 4x super-resolution with RCAN
+    3. Export GeoTIFF by run_id
+    4. Reopen exported GeoTIFF with rasterio and verify CRS EPSG:32643, 2.5m resolution, 4 bands
+    """
+    tif_path = PROJECT_ROOT / "backend" / "sample_tiles" / "sample_real_s2.tif"
+    assert tif_path.exists(), "sample_real_s2.tif not found"
+
+    with open(tif_path, "rb") as f:
+        file_bytes = f.read()
+
+    files = {"file": ("sample_real_s2.tif", file_bytes, "image/tiff")}
+    data = {"model_id": "rcan"}
+
+    # 1. POST /api/superresolve via file upload
+    resp = client.post("/api/superresolve", files=files, data=data)
+    assert resp.status_code == 200, f"Upload inference failed: {resp.text}"
+    resp_data = resp.json()
+    assert resp_data["status"] == "success"
+    assert "run_id" in resp_data
+    run_id = resp_data["run_id"]
+    assert resp_data["geospatial_metadata"]["has_geo"] is True
+    assert resp_data["geospatial_metadata"]["crs"] == "EPSG:32643"
+
+    # 2. GET /api/export/geotiff with run_id
+    export_resp = client.get(f"/api/export/geotiff?run_id={run_id}")
+    assert export_resp.status_code == 200, f"GeoTIFF export failed: {export_resp.text}"
+    assert export_resp.headers["content-type"] == "image/tiff"
+
+    # 3. Reopen exported bytes with rasterio
+    with rasterio.open(io.BytesIO(export_resp.content)) as ds:
+        assert str(ds.crs) == "EPSG:32643", f"Wrong CRS: {ds.crs}"
+        assert ds.count == 4, f"Wrong band count: {ds.count}"
+        assert ds.dtypes[0] == "float32", f"Wrong dtype: {ds.dtypes[0]}"
+        assert ds.shape == (256, 256), f"Wrong shape: {ds.shape}"
+        assert abs(ds.res[0] - 2.5) < 1e-4, f"Wrong X pixel size: {ds.res[0]}"
+        assert abs(ds.res[1] - 2.5) < 1e-4, f"Wrong Y pixel size: {ds.res[1]}"
+
+        # Read bands and verify valid physical reflectance
+        data_arr = ds.read()
+        assert not np.isnan(data_arr).any(), "Found NaNs in exported GeoTIFF"
+        assert not np.isinf(data_arr).any(), "Found Infs in exported GeoTIFF"
+        assert data_arr.min() >= 0.0, "Found negative reflectance values"
+        assert data_arr.max() > 0.0, "Exported GeoTIFF is completely empty"
+

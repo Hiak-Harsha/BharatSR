@@ -33,7 +33,8 @@ from training.losses import BharatSRCombinedLoss, compute_all_metrics
 
 
 class SatelliteDataset(Dataset):
-    def __init__(self, npz_path: Path):
+    def __init__(self, npz_path):
+        npz_path = Path(npz_path)
         data = np.load(str(npz_path))
         self.lr = data["lr"].astype(np.float32)
         self.hr = data["hr"].astype(np.float32)
@@ -55,8 +56,9 @@ def get_git_revision() -> str:
 
 
 def train_rcan(
-    epochs: int = 5,
-    batch_size: int = 4,
+    epochs: int = 10,
+    batch_size: int = 8,
+    patience: int = 3,
     lr_rate: float = 5e-4,
     scale_factor: int = 4,
     n_feats: int = 36,
@@ -107,7 +109,7 @@ def train_rcan(
     print(f"Architecture: Lightweight RCAN-Lite ({n_resgroups} RGs, {n_resblocks} RCABs)")
     print(f"Parameters: {num_params:,} | FLOPs: {profile.get('estimated_flops', 'N/A')}")
     print(f"Loss Weights: rec={lambda_rec}, sam={lambda_sam}, dc={lambda_dc}, unc={lambda_unc}")
-    print(f"Device: {device} | Epochs: {epochs} | Batch Size: {batch_size}")
+    print(f"Device: {device} | Max Epochs: {epochs} | Batch Size: {batch_size} | Patience: {patience}")
     print(f"{'='*70}")
 
     optimizer = optim.Adam(model.parameters(), lr=lr_rate, weight_decay=1e-5)
@@ -122,6 +124,7 @@ def train_rcan(
 
     best_val_loss = float("inf")
     best_epoch = 0
+    epochs_no_improve = 0
     train_history = []
 
     for epoch in range(1, epochs + 1):
@@ -135,6 +138,15 @@ def train_rcan(
 
         for lr_b, hr_b in train_loader:
             lr_b, hr_b = lr_b.to(device), hr_b.to(device)
+
+            # Random 32x32 crop during training for faster convergence and translation invariance
+            h_lr, w_lr = lr_b.shape[-2:]
+            if h_lr > 32 and w_lr > 32:
+                top_lr = np.random.randint(0, h_lr - 32 + 1)
+                left_lr = np.random.randint(0, w_lr - 32 + 1)
+                lr_b = lr_b[:, :, top_lr:top_lr + 32, left_lr:left_lr + 32]
+                top_hr, left_hr = top_lr * scale_factor, left_lr * scale_factor
+                hr_b = hr_b[:, :, top_hr:top_hr + 128, left_hr:left_hr + 128]
 
             optimizer.zero_grad()
             out = model(lr_b)
@@ -161,7 +173,7 @@ def train_rcan(
         train_dc /= n_train
         train_unc /= n_train
 
-        # Validation
+        # Validation on full uncropped validation patches
         model.eval()
         val_loss = 0.0
         val_l1 = 0.0
@@ -180,9 +192,10 @@ def train_rcan(
         val_l1 /= n_val
         elapsed = time.time() - t0
 
-        if val_loss < best_val_loss:
+        if val_loss < best_val_loss - 1e-4:
             best_val_loss = val_loss
             best_epoch = epoch
+            epochs_no_improve = 0
             checkpoint_path = save_dir / checkpoint_name
             torch.save({
                 "epoch": epoch,
@@ -201,6 +214,7 @@ def train_rcan(
             }, str(checkpoint_path))
             marker = " [best]"
         else:
+            epochs_no_improve += 1
             marker = ""
 
         train_history.append({
@@ -213,6 +227,17 @@ def train_rcan(
 
         print(f"Epoch {epoch:2d}/{epochs:2d} | Train Loss: {train_total_loss:7.4f} (L1: {train_l1:6.4f}, SAM: {train_sam:6.4f}, DC: {train_dc:6.4f}) | "
               f"Val Loss: {val_loss:7.4f} | {elapsed:4.1f}s{marker}")
+
+        if epochs_no_improve >= patience and epoch >= 4:
+            print(f"Early stopping triggered at epoch {epoch} (no validation improvement for {patience} epochs).")
+            break
+
+    # Load best validation checkpoint before evaluating on held-out test split
+    checkpoint_path = save_dir / checkpoint_name
+    if checkpoint_path.exists():
+        ckpt = torch.load(str(checkpoint_path), map_location=device)
+        model.load_state_dict(ckpt["model_state_dict"])
+        print(f"Loaded best validation checkpoint from epoch {best_epoch} (val_loss: {best_val_loss:.4f})")
 
     # Final evaluation on held-out test dataset
     print(f"\nEvaluating configuration '{config_name}' on held-out test split...")
@@ -302,6 +327,9 @@ def train_rcan(
         "output_range": [round(output_min, 4), round(output_max, 4)],
         "train_loss": round(train_total_loss, 4),
         "val_loss": round(best_val_loss, 4),
+        "best_epoch": best_epoch,
+        "total_epochs": epoch,
+        "train_history": train_history,
         "test_metrics": avg_test_metrics,
         "test_metrics_std": std_test_metrics,
         "test_metrics_median": median_test_metrics,

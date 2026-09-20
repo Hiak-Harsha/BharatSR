@@ -145,14 +145,155 @@ def evaluate_downstream_suite(
     return results
 
 
-if __name__ == "__main__":
-    np.random.seed(42)
-    # Test with synthetic test case
-    hr = np.random.rand(4, 256, 256).astype(np.float32)
-    hr[BAND_INDEX["B8"], 50:100, 50:100] = 0.6  # simulated canopy NIR
-    hr[BAND_INDEX["B4"], 50:100, 50:100] = 0.1  # simulated canopy Red
+import sys
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+import argparse
+from pathlib import Path
+import torch
+from scipy.ndimage import zoom
 
-    # Independent ground truth mask (e.g. independently mapped building footprints)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from backend.app.models_ml.rcan import RCAN
+from backend.app.models_ml.srcnn import SRCNN
+
+
+def run_downstream_dataset_evaluation(data_path: Path):
+    if not data_path.exists():
+        print(f"Dataset not found at {data_path}. Running synthetic fallback...")
+        return run_synthetic_test()
+
+    data = np.load(str(data_path))
+    lr_arr = data["lr"].astype(np.float32)
+    hr_arr = data["hr"].astype(np.float32)
+    n_samples = len(lr_arr)
+    n_bands = lr_arr.shape[1]
+    scale_factor = 4
+
+    print(f"\n{'='*95}")
+    print(f"BharatSR — Downstream Analytical Task Evaluation (n={n_samples} held-out scenes)")
+    print(f"Data: {data_path.name} | Scale: {scale_factor}x")
+    print(f"{'='*95}")
+
+    # Load models
+    srcnn_path = PROJECT_ROOT / "backend" / "weights" / "srcnn_best.pth"
+    srcnn = None
+    if srcnn_path.exists():
+        chk_s = torch.load(str(srcnn_path), map_location="cpu", weights_only=False)
+        srcnn = SRCNN(n_bands=n_bands)
+        srcnn.load_state_dict(chk_s["model_state_dict"])
+        srcnn.eval()
+
+    rcan_path = PROJECT_ROOT / "backend" / "weights" / "rcan_best.pth"
+    rcan = None
+    if rcan_path.exists():
+        chk_r = torch.load(str(rcan_path), map_location="cpu", weights_only=False)
+        rcan = RCAN(
+            n_bands=n_bands,
+            n_feats=chk_r.get("n_feats", 36),
+            n_resgroups=chk_r.get("n_resgroups", 3),
+            n_resblocks=chk_r.get("n_resblocks", 3),
+            scale=scale_factor,
+            predict_uncertainty=True,
+        )
+        rcan.load_state_dict(chk_r["model_state_dict"])
+        rcan.eval()
+
+    tasks = ["canopy_segmentation", "built_up_infrastructure"]
+    models = ["bicubic", "srcnn", "rcan"]
+    metrics = ["f1", "iou", "precision", "recall"]
+
+    accum = {t: {m: {k: [] for k in metrics} for m in models} for t in tasks}
+
+    for i in range(n_samples):
+        lr_i = lr_arr[i]
+        hr_i = hr_arr[i]
+        c, h_lr, w_lr = lr_i.shape
+
+        # 1. Bicubic
+        bicubic_i = np.zeros((c, h_lr * scale_factor, w_lr * scale_factor), dtype=np.float32)
+        for b in range(c):
+            bicubic_i[b] = zoom(lr_i[b], zoom=scale_factor, order=3)
+        bicubic_i = np.clip(bicubic_i, 0.0, None)
+
+        # 2. SRCNN
+        if srcnn is not None:
+            with torch.no_grad():
+                lr_t = torch.from_numpy(lr_i).unsqueeze(0)
+                lr_up = torch.nn.functional.interpolate(lr_t, scale_factor=scale_factor, mode="bicubic", align_corners=False)
+                out_s = srcnn(lr_up)
+                srcnn_i = np.clip(out_s.squeeze(0).numpy(), 0.0, None)
+        else:
+            srcnn_i = bicubic_i
+
+        # 3. RCAN
+        if rcan is not None:
+            with torch.no_grad():
+                lr_t = torch.from_numpy(lr_i).unsqueeze(0)
+                out_r = rcan(lr_t)
+                sr_t = out_r[0] if isinstance(out_r, tuple) else out_r
+                rcan_i = np.clip(sr_t.squeeze(0).numpy(), 0.0, None)
+        else:
+            rcan_i = bicubic_i
+
+        res = evaluate_downstream_suite(bicubic_i, srcnn_i, rcan_i, hr_i)
+
+        for t in tasks:
+            if t in res:
+                for m in models:
+                    if m in res[t]:
+                        for k in metrics:
+                            accum[t][m][k].append(res[t][m][k])
+
+    # Compute means
+    summary = {}
+    for t in tasks:
+        summary[t] = {}
+        for m in models:
+            summary[t][m] = {k: round(float(np.mean(accum[t][m][k])), 4) for k in metrics}
+
+    print(f"\n| {'Downstream Task':<25} | {'Metric':<10} | {'Bicubic':<10} | {'SRCNN':<10} | {'BharatSR RCAN':<14} | {'Delta vs Bicubic':<16} |")
+    print(f"| {':---':<25} | {':---':<10} | {':---:':<10} | {':---:':<10} | {':---:':<14} | {':---:':<16} |")
+
+    display_names = {
+        "canopy_segmentation": "Micro-Canopy Vegetation",
+        "built_up_infrastructure": "Built-Up Infrastructure",
+    }
+    metric_names = {
+        "f1": "F1-Score",
+        "iou": "IoU (Jaccard)",
+        "recall": "Recall",
+        "precision": "Precision",
+    }
+
+    for t in tasks:
+        t_label = display_names.get(t, t)
+        for idx, k in enumerate(["f1", "iou", "recall", "precision"]):
+            row_label = t_label if idx == 0 else ""
+            b_val = summary[t]["bicubic"][k]
+            s_val = summary[t]["srcnn"][k]
+            r_val = summary[t]["rcan"][k]
+            delta = ((r_val - b_val) / max(b_val, 1e-4)) * 100.0
+            delta_str = f"{delta:+.2f}%"
+            print(f"| {row_label:<25} | {metric_names[k]:<10} | {b_val:<10.4f} | {s_val:<10.4f} | {r_val:<14.4f} | {delta_str:<16} |")
+
+    print("\nCaveat:")
+    print("> Ground truth for this table is a rule-based spectral threshold applied to the HR reference,")
+    print("> not independently labeled data — it measures structural/spectral consistency preservation,")
+    print("> not real-world segmentation accuracy.\n")
+
+    return summary
+
+
+def run_synthetic_test():
+    np.random.seed(42)
+    hr = np.random.rand(4, 256, 256).astype(np.float32)
+    hr[BAND_INDEX["B8"], 50:100, 50:100] = 0.6
+    hr[BAND_INDEX["B4"], 50:100, 50:100] = 0.1
+
     indep_gt = np.zeros((256, 256), dtype=np.uint8)
     indep_gt[40:110, 40:110] = 1
 
@@ -169,3 +310,10 @@ if __name__ == "__main__":
                 scores = data[m]
                 print(f"  {m:8s} -> IoU: {scores['iou']:.4f}, F1: {scores['f1']:.4f}, Precision: {scores['precision']:.4f}, Recall: {scores['recall']:.4f}")
     print("\n[PASS] Downstream task evaluation verified.")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Downstream Task Evaluation")
+    parser.add_argument("--data_path", type=str, default=str(PROJECT_ROOT / "data" / "processed" / "test.npz"))
+    args = parser.parse_args()
+    run_downstream_dataset_evaluation(Path(args.data_path))

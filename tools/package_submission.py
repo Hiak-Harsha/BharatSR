@@ -36,6 +36,7 @@ EXCLUDE_DIRS = {
     "scratch",
     ".idea",
     ".vscode",
+    "internal-notes",
 }
 
 EXCLUDE_EXTENSIONS = {

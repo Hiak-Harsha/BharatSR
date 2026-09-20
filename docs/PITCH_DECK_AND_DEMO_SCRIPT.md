@@ -60,7 +60,7 @@
 
 ### Q1: "How do you prove that the model is not hallucinating details?"
 **Answer:**
-> *"We address hallucination on three levels: first, mathematically via our Downsample Consistency loss ($MAE < 0.01$). Second, empirically via our secondary uncertainty head which predicts per-pixel variance $\sigma$, verified with a positive Pearson correlation against actual reconstruction errors. Third, operationally with our threshold alert slider that masks ambiguous pixels on the analyst's screen."*
+> *"We address hallucination on three levels: first, mathematically via our Downsample Consistency loss ($MAE < 0.002$), which strictly bounds deviation from the sensor's physical aperture. Second, empirically via our secondary uncertainty head which predicts spatial log-variance $\sigma(x, y)$ — which we explicitly declare as uncalibrated rather than claiming false probabilistic certainty, serving as a relative spatial risk map where reconstruction errors concentrate along ambiguous boundaries. Third, operationally with our threshold alert slider on the analyst's screen, which highlights high-variance zones so defense photo-interpreters know exactly which details require secondary reconnaissance."*
 
 ### Q2: "Why is Spectral Angle Mapper (SAM) important compared to PSNR?"
 **Answer:**

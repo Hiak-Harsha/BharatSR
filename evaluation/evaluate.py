@@ -87,12 +87,14 @@ def run_evaluation(data_path: Path):
             else:
                 with torch.no_grad():
                     lr_t = torch.from_numpy(lr_i).unsqueeze(0)
+                    if name == "SRCNN":
+                        lr_t = torch.nn.functional.interpolate(lr_t, scale_factor=scale_factor, mode="bicubic", align_corners=False)
                     out = model(lr_t)
                     if isinstance(out, tuple):
                         sr_t = out[0]
                     else:
                         sr_t = out
-                    sr_i = sr_t.squeeze(0).numpy()
+                    sr_i = np.clip(sr_t.squeeze(0).numpy(), 0.0, None)
 
             m = compute_all_metrics(sr_i, hr_i, lr_i, scale_factor)
             for k in metric_keys:

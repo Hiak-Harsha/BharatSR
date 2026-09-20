@@ -117,8 +117,9 @@ def train_and_eval_srcnn(
     train_dataset: SatelliteDataset,
     val_dataset: SatelliteDataset,
     test_dataset: SatelliteDataset,
-    epochs: int = 3,
-    batch_size: int = 4,
+    epochs: int = 10,
+    batch_size: int = 8,
+    patience: int = 3,
     lr_rate: float = 5e-4,
     scale_factor: int = 4,
     seed: int = 42,
@@ -128,6 +129,10 @@ def train_and_eval_srcnn(
     np.random.seed(seed)
     device = torch.device("cpu")
 
+    save_dir = PROJECT_ROOT / "backend" / "weights"
+    save_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = save_dir / "srcnn_best.pth"
+
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
 
@@ -136,16 +141,31 @@ def train_and_eval_srcnn(
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
     optimizer = optim.AdamW(model.parameters(), lr=lr_rate, weight_decay=1e-5)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
     criterion = nn.L1Loss()
 
     best_val_loss = float("inf")
+    best_epoch = 0
+    epochs_no_improve = 0
     train_total_loss = 0.0
+    train_history = []
 
     for epoch in range(1, epochs + 1):
         model.train()
         epoch_loss = 0.0
+        t0 = time.time()
         for lr_b, hr_b in train_loader:
             lr_b, hr_b = lr_b.to(device), hr_b.to(device)
+
+            # Random 32x32 LR crop during training for faster convergence
+            h_lr, w_lr = lr_b.shape[-2:]
+            if h_lr > 32 and w_lr > 32:
+                top_lr = np.random.randint(0, h_lr - 32 + 1)
+                left_lr = np.random.randint(0, w_lr - 32 + 1)
+                lr_b = lr_b[:, :, top_lr:top_lr + 32, left_lr:left_lr + 32]
+                top_hr, left_hr = top_lr * scale_factor, left_lr * scale_factor
+                hr_b = hr_b[:, :, top_hr:top_hr + 128, left_hr:left_hr + 128]
+
             lr_up = SRCNN.upsample_input(lr_b, scale_factor)
             optimizer.zero_grad()
             sr = model(lr_up)
@@ -154,8 +174,10 @@ def train_and_eval_srcnn(
             optimizer.step()
             epoch_loss += loss.item() * len(lr_b)
 
+        scheduler.step()
         train_total_loss = epoch_loss / len(train_dataset)
 
+        # Validation on full uncropped patches
         model.eval()
         val_loss = 0.0
         with torch.no_grad():
@@ -166,8 +188,41 @@ def train_and_eval_srcnn(
                 loss = criterion(sr, hr_b)
                 val_loss += loss.item() * len(lr_b)
         val_loss /= len(val_dataset)
-        if val_loss < best_val_loss:
+        elapsed = time.time() - t0
+
+        if val_loss < best_val_loss - 1e-4:
             best_val_loss = val_loss
+            best_epoch = epoch
+            epochs_no_improve = 0
+            torch.save({
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "val_loss": val_loss,
+                "n_bands": n_bands,
+                "config_name": "B_SRCNN_L1",
+            }, str(checkpoint_path))
+            marker = " [best]"
+        else:
+            epochs_no_improve += 1
+            marker = ""
+
+        train_history.append({
+            "epoch": epoch,
+            "train_loss": round(train_total_loss, 4),
+            "val_loss": round(val_loss, 4),
+        })
+
+        print(f"SRCNN Epoch {epoch:2d}/{epochs:2d} | Train Loss: {train_total_loss:7.4f} | Val Loss: {val_loss:7.4f} | {elapsed:4.1f}s{marker}")
+
+        if epochs_no_improve >= patience and epoch >= 4:
+            print(f"Early stopping triggered for SRCNN at epoch {epoch} (no improvement for {patience} epochs).")
+            break
+
+    # Load best validation checkpoint before evaluating on held-out test split
+    if checkpoint_path.exists():
+        ckpt = torch.load(str(checkpoint_path), map_location=device)
+        model.load_state_dict(ckpt["model_state_dict"])
+        print(f"Loaded best SRCNN validation checkpoint from epoch {best_epoch} (val_loss: {best_val_loss:.4f})")
 
     # Evaluation on test dataset
     model.eval()
@@ -231,6 +286,9 @@ def train_and_eval_srcnn(
         "output_range": [0.0, 1.2],
         "train_loss": round(train_total_loss, 4),
         "val_loss": round(best_val_loss, 4),
+        "best_epoch": best_epoch,
+        "total_epochs": epoch,
+        "train_history": train_history,
         "test_metrics": mean_metrics,
         "test_metrics_std": std_metrics,
         "test_metrics_median": median_metrics,
@@ -238,7 +296,60 @@ def train_and_eval_srcnn(
     }
 
 
-def run_all_ablations(epochs_per_run: int = 3):
+def plot_loss_curves(all_runs: List[Dict[str, Any]], output_path: Path):
+    """Plot publication-quality training and validation loss curves."""
+    import matplotlib.pyplot as plt
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5), dpi=150)
+
+    # Subplot 1: Config F (Full Production Model) Train vs Val Loss
+    config_f = next((r for r in all_runs if r["config_name"] == "F_RCAN_Full_Uncertainty"), None)
+    if config_f and "train_history" in config_f and config_f["train_history"]:
+        hist = config_f["train_history"]
+        eps = [h["epoch"] for h in hist]
+        t_losses = [h["train_loss"] for h in hist]
+        v_losses = [h["val_loss"] for h in hist]
+        best_ep = config_f.get("best_epoch", eps[-1])
+        best_v_loss = config_f.get("val_loss", v_losses[-1])
+
+        ax1.plot(eps, t_losses, "o-", color="#1f77b4", label="Train Loss (L_total)", linewidth=2)
+        ax1.plot(eps, v_losses, "s-", color="#ff7f0e", label="Validation Loss", linewidth=2)
+        ax1.plot(best_ep, best_v_loss, "*", color="#d62728", markersize=14, label=f"Best Checkpoint (Ep {best_ep}: {best_v_loss:.4f})")
+        ax1.set_title("Production Config F: Convergence & Validation Trajectory", fontsize=12, fontweight="bold")
+        ax1.set_xlabel("Epoch", fontsize=10)
+        ax1.set_ylabel("Loss", fontsize=10)
+        ax1.legend(loc="upper right", frameon=True)
+        ax1.grid(True, linestyle="--", alpha=0.6)
+
+    # Subplot 2: Multi-Configuration Validation Loss Comparison
+    colors = {
+        "B_SRCNN_L1": "#7f7f7f",
+        "C_RCAN_L1": "#2ca02c",
+        "D_RCAN_L1_DC": "#9467bd",
+        "E_RCAN_L1_SAM_DC": "#8c564b",
+        "F_RCAN_Full_Uncertainty": "#1f77b4",
+    }
+    for r in all_runs:
+        c_name = r["config_name"]
+        if "train_history" in r and r["train_history"]:
+            hist = r["train_history"]
+            eps = [h["epoch"] for h in hist]
+            v_losses = [h["val_loss"] for h in hist]
+            ax2.plot(eps, v_losses, "o-", label=c_name, color=colors.get(c_name, None), linewidth=1.8)
+
+    ax2.set_title("Ablation Configurations: Validation Loss Convergence", fontsize=12, fontweight="bold")
+    ax2.set_xlabel("Epoch", fontsize=10)
+    ax2.set_ylabel("Validation Loss", fontsize=10)
+    ax2.legend(loc="upper right", frameon=True)
+    ax2.grid(True, linestyle="--", alpha=0.6)
+
+    plt.tight_layout()
+    fig.savefig(str(output_path), bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved loss curves plot to {output_path}")
+
+
+def run_all_ablations(epochs_per_run: int = 8, batch_size: int = 8, patience: int = 3):
     reports_dir = PROJECT_ROOT / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
     data_dir = PROJECT_ROOT / "data" / "processed"
@@ -261,7 +372,8 @@ def run_all_ablations(epochs_per_run: int = 3):
         val_dataset=val_dataset,
         test_dataset=test_dataset,
         epochs=epochs_per_run,
-        batch_size=4,
+        batch_size=batch_size,
+        patience=patience,
         lr_rate=5e-4,
         scale_factor=4,
     )
@@ -271,7 +383,8 @@ def run_all_ablations(epochs_per_run: int = 3):
     print("\n[3/6] Training Configuration C: RCAN + L1 Loss...")
     res_c = train_rcan(
         epochs=epochs_per_run,
-        batch_size=4,
+        batch_size=batch_size,
+        patience=patience,
         lr_rate=5e-4,
         lambda_rec=1.0,
         lambda_sam=0.0,
@@ -287,7 +400,8 @@ def run_all_ablations(epochs_per_run: int = 3):
     print("\n[4/6] Training Configuration D: RCAN + L1 + Downsample Consistency...")
     res_d = train_rcan(
         epochs=epochs_per_run,
-        batch_size=4,
+        batch_size=batch_size,
+        patience=patience,
         lr_rate=5e-4,
         lambda_rec=1.0,
         lambda_sam=0.0,
@@ -303,7 +417,8 @@ def run_all_ablations(epochs_per_run: int = 3):
     print("\n[5/6] Training Configuration E: RCAN + L1 + SAM + Downsample Consistency...")
     res_e = train_rcan(
         epochs=epochs_per_run,
-        batch_size=4,
+        batch_size=batch_size,
+        patience=patience,
         lr_rate=5e-4,
         lambda_rec=1.0,
         lambda_sam=0.1,
@@ -319,7 +434,8 @@ def run_all_ablations(epochs_per_run: int = 3):
     print("\n[6/6] Training Configuration F: RCAN + Multi-Task Uncertainty (Full Model)...")
     res_f = train_rcan(
         epochs=epochs_per_run,
-        batch_size=4,
+        batch_size=batch_size,
+        patience=patience,
         lr_rate=5e-4,
         lambda_rec=1.0,
         lambda_sam=0.1,
@@ -336,6 +452,10 @@ def run_all_ablations(epochs_per_run: int = 3):
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(all_runs, f, indent=2)
     print(f"\nSaved {json_path}")
+
+    # Plot loss curves
+    loss_curve_path = reports_dir / "training_loss_curves.png"
+    plot_loss_curves(all_runs, loss_curve_path)
 
     # Save reports/model_comparison.csv
     csv_path = reports_dir / "model_comparison.csv"
@@ -404,7 +524,9 @@ def run_all_ablations(epochs_per_run: int = 3):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Run BharatSR Scientific Ablation Suite")
-    parser.add_argument("--epochs", type=int, default=3, help="Epochs per ablation configuration (default: 3)")
+    parser.add_argument("--epochs", type=int, default=8, help="Epochs per ablation configuration (default: 8)")
+    parser.add_argument("--batch-size", type=int, default=8, help="Batch size (default: 8)")
+    parser.add_argument("--patience", type=int, default=3, help="Early stopping patience (default: 3)")
     args = parser.parse_args()
 
-    run_all_ablations(epochs_per_run=args.epochs)
+    run_all_ablations(epochs_per_run=args.epochs, batch_size=args.batch_size, patience=args.patience)

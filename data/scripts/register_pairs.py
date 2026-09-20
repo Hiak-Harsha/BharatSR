@@ -49,7 +49,10 @@ def estimate_subpixel_translation(
     target = lr_band - np.mean(lr_band)
 
     corr = correlate2d(ref, target, mode="same")
-    mid_y, mid_x = corr.shape[0] // 2, corr.shape[1] // 2
+    # In scipy.signal.correlate2d with mode="same", zero lag is centered at (shape - 1) // 2.
+    # For even dimensions H (e.g. 64), zero-lag is at (64 - 1) // 2 = 31.
+    # Using H // 2 = 32 previously introduced an erroneous (-1, -1) systematic offset.
+    mid_y, mid_x = (corr.shape[0] - 1) // 2, (corr.shape[1] - 1) // 2
 
     # Find peak index
     peak_y, peak_x = np.unravel_index(np.argmax(corr), corr.shape)
@@ -136,6 +139,7 @@ def register_dataset_pairs(
     output_report_path: Optional[Path] = None,
     max_allowed_rmse_px: float = 0.5,
     gsd_m: float = 10.0,
+    max_pairs: Optional[int] = None,
 ) -> Dict[str, any]:
     """
     Registers and validates LR/HR scene pairs in a dataset archive.
@@ -145,12 +149,13 @@ def register_dataset_pairs(
     lr_patches = data["lr"].astype(np.float32)
     hr_patches = data["hr"].astype(np.float32)
     n_pairs = len(lr_patches)
+    eval_limit = min(n_pairs, max_pairs) if max_pairs is not None else n_pairs
 
     results = []
     accepted_count = 0
     rejected_count = 0
 
-    for idx in range(min(n_pairs, 20)):
+    for idx in range(eval_limit):
         reg = compute_registration_rmse(lr_patches[idx], hr_patches[idx], gsd_m=gsd_m)
         is_accepted = bool(reg["rmse_pixels"] <= max_allowed_rmse_px)
         reg["pair_index"] = idx
@@ -200,6 +205,7 @@ if __name__ == "__main__":
     parser.add_argument("--data", type=str, default="data/processed/test.npz", help="Path to .npz dataset")
     parser.add_argument("--out", type=str, default="reports/registration_report.json", help="Path to output report")
     parser.add_argument("--max-rmse", type=float, default=0.5, help="Maximum allowed RMSE in pixels")
+    parser.add_argument("--max-pairs", type=int, default=None, help="Maximum pairs to evaluate (default: all)")
     args = parser.parse_args()
 
     data_file = PROJECT_ROOT / args.data
@@ -209,7 +215,7 @@ if __name__ == "__main__":
         print(f"[FAIL] Data file not found: {data_file}")
         sys.exit(1)
 
-    rep = register_dataset_pairs(data_file, out_file, max_allowed_rmse_px=args.max_rmse)
+    rep = register_dataset_pairs(data_file, out_file, max_allowed_rmse_px=args.max_rmse, max_pairs=args.max_pairs)
     print("============================================================")
     print(" BharatSR Sub-Pixel Co-Registration Verification")
     print("============================================================")

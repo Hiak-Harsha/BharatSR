@@ -1,0 +1,22 @@
+{
+  "scene_id": "scene_154",
+  "is_synthetic": true,
+  "source_dataset": "Procedural Synthetic Pattern",
+  "sensor": "Sentinel-2 MSI 10m bands (B2, B3, B4, B8) simulation",
+  "scale_factor": 4,
+  "lr_shape": [
+    4,
+    64,
+    64
+  ],
+  "hr_shape": [
+    4,
+    256,
+    256
+  ],
+  "reflectance_range": [
+    0.03523112088441849,
+    0.7969662547111511
+  ],
+  "registration_rmse": 0.0
+}

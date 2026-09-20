@@ -1,6 +1,11 @@
 # BharatSR (SIH26142) Pinned Dependencies
 # Python >= 3.10, PyTorch CPU/CUDA compatible
 
+# NOTE: PyTorch CPU wheel requires PyTorch's official wheel repository.
+# If installing manually: pip install torch==2.14.0+cpu torchvision==0.29.0+cpu --index-url https://download.pytorch.org/whl/cpu
+# The extra-index-url directive below allows standard `pip install -r requirements.txt` to locate the CPU build automatically:
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 # Core Deep Learning
 torch==2.14.0+cpu
 torchvision==0.29.0+cpu
