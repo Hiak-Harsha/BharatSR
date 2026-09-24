@@ -81,10 +81,18 @@ def train_rcan(
     save_dir.mkdir(parents=True, exist_ok=True)
     data_dir = PROJECT_ROOT / "data" / "processed"
 
-    train_dataset = SatelliteDataset(data_dir / "train.npz")
-    val_dataset = SatelliteDataset(data_dir / "val.npz")
+    val_dataset_raw = SatelliteDataset(data_dir / "val.npz")
     test_path = data_dir / "test.npz"
-    test_dataset = SatelliteDataset(test_path) if test_path.exists() else val_dataset
+    if test_path.exists():
+        val_dataset = val_dataset_raw
+        test_dataset = SatelliteDataset(test_path)
+    else:
+        # Separate val and test to eliminate data leakage
+        val_len = len(val_dataset_raw)
+        mid = max(1, val_len // 2)
+        val_dataset, test_dataset = torch.utils.data.random_split(
+            val_dataset_raw, [mid, val_len - mid], generator=torch.Generator().manual_seed(seed)
+        )
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)

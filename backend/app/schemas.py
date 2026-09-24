@@ -217,3 +217,80 @@ class ReportResponse(BaseModel):
     metrics: Dict[str, Any]
     uncertainty_summary: Optional[Dict[str, Any]] = None
     spectral_integrity_compliance: Dict[str, Any]
+
+
+class SpectralIndicesResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    status: str
+    indices: Dict[str, Any]
+
+
+class CropHealthResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    status: str
+    disclaimer: str
+    model_id: str
+    classification_map: str
+    area_statistics: Dict[str, Any]
+    health_score: float
+    mean_ndvi: float
+    mean_evi: float
+    sr_vs_lr_ndvi_uplift: float
+    recommendations: List[str]
+    class_legend: Dict[int, str]
+
+
+class FieldBoundaryResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    status: str
+    disclaimer: str
+    model_id: str
+    sr_edge_overlay: str
+    lr_edge_overlay: str
+    sr_edge_density: float
+    lr_edge_density: float
+    boundary_improvement_ratio: float
+    sr_edge_pixel_count: int
+    lr_edge_pixel_count: int
+    method: str
+
+
+class ChangeDetectionResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    status: str
+    run_id_t1: str
+    run_id_t2: str
+    method: str
+    ndvi_difference_map: str
+    spectral_difference_map: str
+    change_magnitude_map: str
+    statistics: Dict[str, Any]
+    interpretation: str
+    disclaimer: str
+
+
+class BatchSubmitResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    status: str
+    batch_id: str
+    job_ids: List[str]
+    total: int
+    status_url: str
+
+
+class BatchStatusResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    batch_id: str
+    overall_status: str
+    completed: int
+    failed: int
+    total: int
+    jobs: List[Dict[str, Any]]
+
+
+class ModelReloadResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    status: str
+    model_id: str
+    checkpoint: str
+    metadata: Optional[Dict[str, Any]] = None

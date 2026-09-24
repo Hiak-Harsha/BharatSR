@@ -5,7 +5,7 @@ Model loading, inference pipeline, and result generation.
 
 import time
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -13,19 +13,32 @@ import torch.nn.functional as F
 
 from backend.app.models_ml.srcnn import SRCNN
 from backend.app.models_ml.rcan import RCAN
+from backend.app.models_ml.swinir_sr import SwinIR_SR
+from backend.app.models_ml.hat_sr import HAT_SR
+from backend.app.models_ml.diffusion_sr import DiffusionSR
+from backend.app.models_ml.ensemble_sr import EnsembleSR
 from backend.app.models_ml.uncertainty import logvar_to_std
 
 
 class ModelRegistry:
     """
-    Manages loaded models. Models are loaded once at startup and kept in memory.
-    Supports swapping between SRCNN (Phase 2) and RCAN (Phase 5).
+    Unified Model Registry: Manages loaded models in memory.
+    Supports SRCNN, RCAN, SwinIR, HAT, Diffusion, and Ensemble models.
+    Auto-detects CUDA / Apple MPS / CPU.
     """
 
     def __init__(self):
         self._models: Dict[str, torch.nn.Module] = {}
         self._metadata: Dict[str, dict] = {}
-        self._device = torch.device("cpu")
+        if torch.cuda.is_available():
+            self._device = torch.device("cuda")
+            print(f"ModelRegistry: GPU detected -> {torch.cuda.get_device_name(0)}")
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            self._device = torch.device("mps")
+            print("ModelRegistry: Apple Silicon MPS detected")
+        else:
+            self._device = torch.device("cpu")
+            print("ModelRegistry: Running on CPU")
 
     def load_model(self, model_id: str, checkpoint_path: str) -> bool:
         """Load a model from a checkpoint file."""
@@ -43,6 +56,7 @@ class ModelRegistry:
                 model = SRCNN(n_bands=n_bands)
                 name = "SRCNN Baseline"
                 arch = "3-layer CNN (L1 loss)"
+                has_unc = False
             elif model_id == "rcan":
                 n_feats = checkpoint.get("n_feats", 36)
                 n_resgroups = checkpoint.get("n_resgroups", 3)
@@ -57,11 +71,48 @@ class ModelRegistry:
                 )
                 name = "RCAN Attention + Uncertainty"
                 arch = f"RIR ({n_resgroups} RGs, {n_resblocks} RCABs, Channel Attention)"
+                has_unc = True
+            elif model_id == "swinir":
+                model = SwinIR_SR(
+                    n_bands=n_bands,
+                    embed_dim=checkpoint.get("embed_dim", 60),
+                    depths=checkpoint.get("depths", [6, 6, 6]),
+                    num_heads=checkpoint.get("num_heads", [6, 6, 6]),
+                    window_size=checkpoint.get("window_size", 4),
+                    scale=scale_factor,
+                    predict_uncertainty=True,
+                )
+                name = "SwinIR Transformer"
+                arch = "Shifted-Window Self-Attention Transformer"
+                has_unc = True
+            elif model_id == "hat":
+                model = HAT_SR(
+                    n_bands=n_bands,
+                    embed_dim=checkpoint.get("embed_dim", 48),
+                    depths=checkpoint.get("depths", [4, 4, 4]),
+                    num_heads=checkpoint.get("num_heads", [4, 4, 4]),
+                    window_size=checkpoint.get("window_size", 4),
+                    scale=scale_factor,
+                    predict_uncertainty=True,
+                )
+                name = "HAT Hybrid Attention Transformer"
+                arch = "Window + Channel Attention Hybrid Transformer"
+                has_unc = True
+            elif model_id == "diffusion":
+                model = DiffusionSR(
+                    n_bands=n_bands,
+                    scale=scale_factor,
+                    num_steps=checkpoint.get("num_steps", 4),
+                )
+                name = "DiffusionSR (4-Step DDIM)"
+                arch = "Conditional Diffusion with UNet Backbone"
+                has_unc = True
             else:
                 print(f"Unknown model ID: {model_id}")
                 return False
 
-            model.load_state_dict(checkpoint["model_state_dict"])
+            if "model_state_dict" in checkpoint:
+                model.load_state_dict(checkpoint["model_state_dict"])
             model.to(self._device)
             model.eval()
 
@@ -74,7 +125,7 @@ class ModelRegistry:
                 "scale_factor": scale_factor,
                 "epoch": checkpoint.get("epoch", "unknown"),
                 "val_loss": checkpoint.get("val_loss", None),
-                "has_uncertainty": (model_id == "rcan"),
+                "has_uncertainty": has_unc,
                 "status": "loaded",
             }
             print(f"Loaded model '{model_id}' ({name}) from {path}")
@@ -83,6 +134,35 @@ class ModelRegistry:
         except Exception as e:
             print(f"Error loading model '{model_id}': {e}")
             return False
+
+    def build_ensemble(self, model_ids: list, weights: list = None) -> Optional[EnsembleSR]:
+        """Build and register an inference-time weighted ensemble from loaded models."""
+        models = [self.get_model(m_id) for m_id in model_ids]
+        if any(m is None for m in models):
+            return None
+        weights = weights or [1.0 / len(models)] * len(models)
+        ensemble = EnsembleSR(models=models, weights=weights, model_names=model_ids)
+        ensemble.to(self._device)
+        ensemble.eval()
+        self._models["ensemble"] = ensemble
+        self._metadata["ensemble"] = {
+            "id": "ensemble",
+            "name": f"Ensemble ({'+'.join(model_ids)})",
+            "architecture": "Variance-Pooled Weighted Multi-Model Ensemble",
+            "n_bands": ensemble.n_bands,
+            "scale_factor": ensemble.scale_factor,
+            "has_uncertainty": ensemble.predict_uncertainty,
+            "status": "loaded",
+        }
+        return ensemble
+
+    def hot_reload(self, model_id: str, checkpoint_path: str) -> bool:
+        """Hot-reload a model from an updated checkpoint without server restart."""
+        if model_id in self._models:
+            del self._models[model_id]
+        if model_id in self._metadata:
+            del self._metadata[model_id]
+        return self.load_model(model_id, checkpoint_path)
 
     def get_model(self, model_id: str) -> Optional[torch.nn.Module]:
         return self._models.get(model_id)
@@ -259,8 +339,9 @@ def run_tiled_inference(
     out_sr = np.zeros((c, h_out, w_out), dtype=np.float32)
     weights = np.zeros((1, h_out, w_out), dtype=np.float32)
 
-    has_unc = isinstance(model, RCAN) and getattr(model, "predict_uncertainty", False)
-    out_unc = np.zeros((h_out, w_out), dtype=np.float32) if has_unc else None
+    has_unc = bool(getattr(model, "predict_uncertainty", False))
+    out_var = np.zeros((h_out, w_out), dtype=np.float32) if has_unc else None
+    out_unc = None
 
     step = max(1, tile_size - overlap)
     y_starts = list(range(0, max(1, h - tile_size + 1), step))
@@ -284,13 +365,15 @@ def run_tiled_inference(
             out_sr[:, y_out0:y_out0 + th, x_out0:x_out0 + tw] += sr_tile * win
             weights[:, y_out0:y_out0 + th, x_out0:x_out0 + tw] += win
 
-            if out_unc is not None and unc_tile is not None:
-                out_unc[y_out0:y_out0 + th, x_out0:x_out0 + tw] += unc_tile * win
+            if out_var is not None and unc_tile is not None:
+                # Accumulate variance (sigma^2), not sigma directly
+                out_var[y_out0:y_out0 + th, x_out0:x_out0 + tw] += (unc_tile ** 2) * win
 
     out_sr /= np.maximum(weights, 1e-7)
     out_sr = np.clip(out_sr, 0.0, None)
-    if out_unc is not None:
-        out_unc /= np.maximum(weights[0], 1e-7)
+    if out_var is not None:
+        out_var /= np.maximum(weights[0], 1e-7)
+        out_unc = np.sqrt(np.maximum(out_var, 0.0))
 
     latency = time.time() - t0
     return out_sr, latency, out_unc
@@ -325,11 +408,14 @@ def process_geotiff_file(
         raw_data = raw_data / 255.0
     raw_data = np.clip(raw_data, 0.0, None)
 
-    if raw_data.shape[0] > 4:
+    if raw_data.shape[0] < 4:
+        raise ValueError(
+            f"Sentinel-2 model requires exactly 4 bands (B2, B3, B4, B8). "
+            f"File has {raw_data.shape[0]} bands. "
+            "Zero-padding bands is not allowed. Please provide a 4-band GeoTIFF."
+        )
+    elif raw_data.shape[0] > 4:
         raw_data = raw_data[:4]
-    elif raw_data.shape[0] < 4:
-        pad = np.zeros((4 - raw_data.shape[0], raw_data.shape[1], raw_data.shape[2]), dtype=np.float32)
-        raw_data = np.concatenate([raw_data, pad], axis=0)
 
     c_in, h_in, w_in = raw_data.shape
     sr_image, latency, unc_map = run_tiled_inference(
@@ -343,9 +429,9 @@ def process_geotiff_file(
 
     out_transform = Affine(
         in_transform.a / scale_factor,
-        in_transform.b / scale_factor,
+        in_transform.b,
         in_transform.c,
-        in_transform.d / scale_factor,
+        in_transform.d,
         in_transform.e / scale_factor,
         in_transform.f,
     )
@@ -385,6 +471,53 @@ def process_geotiff_file(
         "dimensions": [c, h, w],
         "latency_seconds": round(latency, 2),
     }
+
+
+def run_batch_inference(
+    model: torch.nn.Module,
+    lr_images: List[np.ndarray],  # List of (C, H, W) arrays
+    scale_factor: int = 4,
+    device: torch.device = torch.device("cpu"),
+    batch_size: int = 4,
+) -> List[Tuple[np.ndarray, float, Optional[np.ndarray]]]:
+    """
+    Efficient batched inference for multiple LR tiles.
+    Pads images to a common size within each mini-batch.
+    Returns list of (sr_image, latency, uncertainty_map) per input.
+    """
+    results = []
+    for i in range(0, len(lr_images), batch_size):
+        batch = lr_images[i : i + batch_size]
+        max_h = max(img.shape[1] for img in batch)
+        max_w = max(img.shape[2] for img in batch)
+
+        padded = []
+        for img in batch:
+            c, h, w = img.shape
+            pad_h, pad_w = max_h - h, max_w - w
+            padded.append(np.pad(img, ((0, 0), (0, pad_h), (0, pad_w)), mode="reflect"))
+
+        batch_tensor = torch.stack([torch.from_numpy(p) for p in padded]).float().to(device)
+        t0 = time.time()
+        with torch.no_grad():
+            out = model(batch_tensor)
+        latency = (time.time() - t0) / max(1, len(batch))
+
+        if isinstance(out, tuple):
+            sr_batch, lv_batch = out
+        else:
+            sr_batch, lv_batch = out, None
+
+        for j, original in enumerate(batch):
+            _, h_orig, w_orig = original.shape
+            sr = sr_batch[j, :, : h_orig * scale_factor, : w_orig * scale_factor].cpu().numpy()
+            unc = None
+            if lv_batch is not None:
+                unc = logvar_to_std(
+                    lv_batch[j, 0, : h_orig * scale_factor, : w_orig * scale_factor].cpu().numpy()
+                )
+            results.append((sr, latency, unc))
+    return results
 
 
 # Global registry instance

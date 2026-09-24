@@ -16,12 +16,24 @@ import {
   getGeoTIFFDownloadUrl,
   getReportDownloadUrl,
   getDownstreamMasks,
+  getSpectralIndices,
+  getCropHealth,
+  getFieldBoundary,
+  getChangeDetection,
+  submitBatch,
+  getBatchStatus,
+  getWebSocketInferenceUrl,
   ModelInfo,
   SampleTile,
   SuperResolveResponse,
   CompareResponse,
   PixelProfileResponse,
   DownstreamMasksResponse,
+  SpectralIndicesData,
+  CropHealthData,
+  FieldBoundaryData,
+  ChangeDetectionData,
+  BatchStatusData,
 } from "@/lib/api";
 
 export default function Home() {
@@ -37,6 +49,11 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [loadingAction, setLoadingAction] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
+
+  // Active Console Analysis Mode
+  const [activeConsoleTab, setActiveConsoleTab] = useState<
+    "viewer" | "indices" | "crop_health" | "field_boundary" | "change_detect" | "batch"
+  >("viewer");
 
   // Results & Active Session Cache
   const [result, setResult] = useState<SuperResolveResponse | null>(null);
@@ -57,6 +74,34 @@ export default function Home() {
   const [downstreamMasks, setDownstreamMasks] = useState<DownstreamMasksResponse | null>(null);
   const [loadingDownstream, setLoadingDownstream] = useState<boolean>(false);
   const [activeDownstreamTask, setActiveDownstreamTask] = useState<"canopy_segmentation" | "built_up_infrastructure">("canopy_segmentation");
+
+  // Spectral Indices State
+  const [indicesData, setIndicesData] = useState<SpectralIndicesData | null>(null);
+  const [loadingIndices, setLoadingIndices] = useState(false);
+  const [activeSpectralIndex, setActiveSpectralIndex] = useState<string>("ndvi");
+
+  // Farmer Crop Health State
+  const [cropHealthData, setCropHealthData] = useState<CropHealthData | null>(null);
+  const [loadingCropHealth, setLoadingCropHealth] = useState(false);
+
+  // Field Boundary Delineation State
+  const [fieldBoundaryData, setFieldBoundaryData] = useState<FieldBoundaryData | null>(null);
+  const [loadingFieldBoundary, setLoadingFieldBoundary] = useState(false);
+  const [edgeOpacity, setEdgeOpacity] = useState<number>(1.0);
+
+  // Bi-Temporal Change Detection State
+  const [changeDetectData, setChangeDetectData] = useState<ChangeDetectionData | null>(null);
+  const [loadingChangeDetect, setLoadingChangeDetect] = useState(false);
+  const [changeRunId1, setChangeRunId1] = useState<string>("");
+  const [changeRunId2, setChangeRunId2] = useState<string>("");
+  const [changeMethod, setChangeMethod] = useState<string>("ndvi_diff");
+
+  // Batch Processing & WebSocket State
+  const [batchSampleIds, setBatchSampleIds] = useState<string[]>(["sample_0", "sample_1", "sample_2"]);
+  const [batchData, setBatchData] = useState<BatchStatusData | null>(null);
+  const [loadingBatch, setLoadingBatch] = useState(false);
+  const [wsProgress, setWsProgress] = useState<number | null>(null);
+  const [wsStatus, setWsStatus] = useState<string | null>(null);
 
   // Async Jobs
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
@@ -157,6 +202,111 @@ export default function Home() {
       console.error("Downstream masks error:", e);
     } finally {
       setLoadingDownstream(false);
+    }
+  };
+
+  // Compute 7 Spectral Indices
+  const handleFetchIndices = async () => {
+    setLoadingIndices(true);
+    setError(null);
+    try {
+      const data = await getSpectralIndices(
+        inputTab === "samples" ? selectedSample || undefined : undefined,
+        activeRunId || undefined,
+        selectedModel
+      );
+      setIndicesData(data);
+    } catch (e: any) {
+      setError(e.message || "Failed to compute spectral indices");
+    } finally {
+      setLoadingIndices(false);
+    }
+  };
+
+  // Farmer Crop Health Analysis
+  const handleFetchCropHealth = async () => {
+    setLoadingCropHealth(true);
+    setError(null);
+    try {
+      const data = await getCropHealth(
+        inputTab === "samples" ? selectedSample || undefined : undefined,
+        activeRunId || undefined,
+        selectedModel
+      );
+      setCropHealthData(data);
+    } catch (e: any) {
+      setError(e.message || "Failed to assess crop health");
+    } finally {
+      setLoadingCropHealth(false);
+    }
+  };
+
+  // Field Boundary Delineation
+  const handleFetchFieldBoundary = async () => {
+    setLoadingFieldBoundary(true);
+    setError(null);
+    try {
+      const data = await getFieldBoundary(
+        inputTab === "samples" ? selectedSample || undefined : undefined,
+        activeRunId || undefined,
+        selectedModel
+      );
+      setFieldBoundaryData(data);
+    } catch (e: any) {
+      setError(e.message || "Failed to delineate field boundaries");
+    } finally {
+      setLoadingFieldBoundary(false);
+    }
+  };
+
+  // Bi-Temporal Change Detection
+  const handleFetchChangeDetection = async () => {
+    if (!changeRunId1 || !changeRunId2) {
+      setError("Please provide both First Date and Second Date Run IDs.");
+      return;
+    }
+    setLoadingChangeDetect(true);
+    setError(null);
+    try {
+      const data = await getChangeDetection(changeRunId1, changeRunId2, changeMethod);
+      setChangeDetectData(data);
+    } catch (e: any) {
+      setError(e.message || "Change detection failed");
+    } finally {
+      setLoadingChangeDetect(false);
+    }
+  };
+
+  // Batch Super-Resolution Submission with WebSocket Monitor
+  const handleBatchSubmit = async () => {
+    setLoadingBatch(true);
+    setError(null);
+    try {
+      const submitRes = await submitBatch(batchSampleIds.join(","), undefined, selectedModel);
+      const statusRes = await getBatchStatus(submitRes.batch_id);
+      setBatchData(statusRes);
+
+      if (submitRes.job_ids.length > 0) {
+        const firstJobId = submitRes.job_ids[0];
+        const wsUrl = getWebSocketInferenceUrl(firstJobId);
+        if (wsUrl) {
+          const ws = new WebSocket(wsUrl);
+          ws.onmessage = (event) => {
+            try {
+              const msg = JSON.parse(event.data);
+              setWsProgress(msg.progress_pct);
+              setWsStatus(msg.status);
+            } catch (_) {}
+          };
+          ws.onclose = () => {
+            getBatchStatus(submitRes.batch_id).then(setBatchData).catch(() => {});
+          };
+        }
+      }
+    } catch (e: any) {
+      setError(e.message || "Batch submission failed");
+    } finally {
+      setLoadingBatch(false);
     }
   };
 
@@ -506,9 +656,129 @@ export default function Home() {
 
               <label
                 className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition ${
+                  selectedModel === "swinir"
+                    ? "border-cyan-500 bg-cyan-950/25 ring-1 ring-cyan-500/50"
+                    : "border-slate-800 bg-slate-900/40 hover:border-slate-700"
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <input
+                    type="radio"
+                    name="model"
+                    value="swinir"
+                    checked={selectedModel === "swinir"}
+                    onChange={() => setSelectedModel("swinir")}
+                    className="accent-cyan-500"
+                  />
+                  <div>
+                    <div className="text-xs font-semibold text-slate-200">
+                      SwinIR-SR (Swin Transformer)
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">
+                      Shifted-window self-attention with heteroscedastic uncertainty head
+                    </div>
+                  </div>
+                </div>
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800/60 font-mono">
+                  Transformer
+                </span>
+              </label>
+
+              <label
+                className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition ${
+                  selectedModel === "hat"
+                    ? "border-emerald-500 bg-emerald-950/25 ring-1 ring-emerald-500/50"
+                    : "border-slate-800 bg-slate-900/40 hover:border-slate-700"
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <input
+                    type="radio"
+                    name="model"
+                    value="hat"
+                    checked={selectedModel === "hat"}
+                    onChange={() => setSelectedModel("hat")}
+                    className="accent-emerald-500"
+                  />
+                  <div>
+                    <div className="text-xs font-semibold text-slate-200">
+                      HAT-SR (Hybrid Attention)
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">
+                      Hybrid shifted-window attention + channel attention
+                    </div>
+                  </div>
+                </div>
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800/60 font-mono">
+                  Hybrid
+                </span>
+              </label>
+
+              <label
+                className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition ${
+                  selectedModel === "diffusion"
+                    ? "border-amber-500 bg-amber-950/25 ring-1 ring-amber-500/50"
+                    : "border-slate-800 bg-slate-900/40 hover:border-slate-700"
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <input
+                    type="radio"
+                    name="model"
+                    value="diffusion"
+                    checked={selectedModel === "diffusion"}
+                    onChange={() => setSelectedModel("diffusion")}
+                    className="accent-amber-500"
+                  />
+                  <div>
+                    <div className="text-xs font-semibold text-slate-200">
+                      DiffusionSR (4-Step DDIM)
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">
+                      Lightweight conditional DDPM with deterministic 4-step sampling
+                    </div>
+                  </div>
+                </div>
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800/60 font-mono">
+                  Diffusion
+                </span>
+              </label>
+
+              <label
+                className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition ${
+                  selectedModel === "ensemble"
+                    ? "border-purple-500 bg-purple-950/25 ring-1 ring-purple-500/50"
+                    : "border-slate-800 bg-slate-900/40 hover:border-slate-700"
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <input
+                    type="radio"
+                    name="model"
+                    value="ensemble"
+                    checked={selectedModel === "ensemble"}
+                    onChange={() => setSelectedModel("ensemble")}
+                    className="accent-purple-500"
+                  />
+                  <div>
+                    <div className="text-xs font-semibold text-slate-200">
+                      EnsembleSR (RCAN + SwinIR)
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">
+                      60% RCAN (consistency) + 40% SwinIR (sharp edges) weighted fusion
+                    </div>
+                  </div>
+                </div>
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-800/60 font-mono">
+                  Ensemble
+                </span>
+              </label>
+
+              <label
+                className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition ${
                   selectedModel === "srcnn"
                     ? "border-cyan-500 bg-cyan-950/20"
-                    : "border-slate-800 bg-slate-900/40"
+                    : "border-slate-800 bg-slate-900/40 hover:border-slate-700"
                 }`}
               >
                 <div className="flex items-center gap-3">
@@ -531,6 +801,36 @@ export default function Home() {
                 </div>
                 <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
                   Baseline
+                </span>
+              </label>
+
+              <label
+                className={`p-3 rounded-xl border flex items-center justify-between cursor-pointer transition ${
+                  selectedModel === "bicubic"
+                    ? "border-slate-600 bg-slate-800/40"
+                    : "border-slate-800 bg-slate-900/40 hover:border-slate-700"
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <input
+                    type="radio"
+                    name="model"
+                    value="bicubic"
+                    checked={selectedModel === "bicubic"}
+                    onChange={() => setSelectedModel("bicubic")}
+                    className="accent-slate-400"
+                  />
+                  <div>
+                    <div className="text-xs font-semibold text-slate-200">
+                      Bicubic Interpolation
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">
+                      Analytical reference baseline (0 params)
+                    </div>
+                  </div>
+                </div>
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
+                  Analytical
                 </span>
               </label>
             </div>
@@ -654,9 +954,41 @@ export default function Home() {
 
         {/* Right Column: Visualization & Scientific Metrics (7 cols) */}
         <div className="lg:col-span-7 space-y-5">
-          {/* Multi-Model Comparison Matrix Card */}
-          {compareResult && (
-            <div className="glass-panel p-5 space-y-4 border-cyan-500/40 shadow-lg shadow-cyan-950/30">
+          {/* Analysis Mode Secondary Tab Bar */}
+          <div className="glass-panel p-2 flex flex-wrap items-center gap-1.5 border-slate-800 bg-slate-950/70">
+            {[
+              { id: "viewer", label: "Spatial & Evidence Viewer", icon: "🛰️" },
+              { id: "indices", label: "Spectral Index Suite", icon: "📊" },
+              { id: "crop_health", label: "Farmer Crop Health", icon: "🌱" },
+              { id: "field_boundary", label: "Field Boundary Delineator", icon: "📐" },
+              { id: "change_detect", label: "Bi-Temporal Change", icon: "⏱️" },
+              { id: "batch", label: "Batch & WebSocket Monitor", icon: "⚡" },
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => {
+                  setActiveConsoleTab(tab.id as any);
+                  if (tab.id === "indices" && !indicesData) handleFetchIndices();
+                  if (tab.id === "crop_health" && !cropHealthData) handleFetchCropHealth();
+                  if (tab.id === "field_boundary" && !fieldBoundaryData) handleFetchFieldBoundary();
+                }}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+                  activeConsoleTab === tab.id
+                    ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm shadow-cyan-950/40"
+                    : "text-slate-400 hover:text-slate-200 hover:bg-slate-900 border border-transparent"
+                }`}
+              >
+                <span>{tab.icon}</span>
+                <span>{tab.label}</span>
+              </button>
+            ))}
+          </div>
+
+          {activeConsoleTab === "viewer" && (
+            <>
+              {/* Multi-Model Comparison Matrix Card */}
+              {compareResult && (
+                <div className="glass-panel p-5 space-y-4 border-cyan-500/40 shadow-lg shadow-cyan-950/30">
               <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                 <div className="flex items-center gap-2">
                   <span className="text-lg">⚖️</span>
@@ -1447,8 +1779,691 @@ export default function Home() {
               </div>
             </div>
           )}
+        </>
+      )}
+
+      {/* 2. Spectral Index Suite Tab */}
+      {activeConsoleTab === "indices" && (
+        <div className="glass-panel p-6 space-y-6 border-cyan-500/30">
+          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xl">📊</span>
+                <h3 className="text-base font-bold text-slate-100">
+                  Comprehensive Spectral Index Suite
+                </h3>
+              </div>
+              <p className="text-xs text-slate-400 mt-1 max-w-xl">
+                Physics-based vegetative, moisture, and biophysical indices computed directly on 4-band calibrated surface reflectance $[0, \sim 1+]$.
+              </p>
+            </div>
+            <button
+              onClick={handleFetchIndices}
+              disabled={loadingIndices}
+              className="px-4 py-2 rounded-xl bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 text-xs font-semibold hover:bg-cyan-500/20 transition flex items-center gap-2"
+            >
+              {loadingIndices ? "Computing..." : "Recalculate Indices"}
+            </button>
+          </div>
+
+          {loadingIndices ? (
+            <div className="p-12 text-center text-slate-400 space-y-3">
+              <div className="animate-spin w-8 h-8 border-2 border-cyan-400 border-t-transparent rounded-full mx-auto" />
+              <p className="text-xs">Computing 7 spectral indices across LR and 4× SR arrays...</p>
+            </div>
+          ) : indicesData ? (
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {Object.entries(indicesData.indices).map(([name, data]) => {
+                  const titles: Record<string, { label: string; formula: string; desc: string }> = {
+                    ndvi: { label: "NDVI — Normalized Difference Vegetation", formula: "(NIR - Red) / (NIR + Red)", desc: "Primary vigor metric. Values > 0.4 indicate dense healthy canopy." },
+                    ndwi: { label: "NDWI — Normalized Difference Water", formula: "(Green - NIR) / (Green + NIR)", desc: "Surface water & moisture content. Delineates open water bodies." },
+                    evi: { label: "EVI — Enhanced Vegetation Index", formula: "2.5*(NIR-Red)/(NIR+6*Red-7.5*Blue+1)", desc: "Decouples canopy background noise and reduces atmospheric haze." },
+                    savi: { label: "SAVI — Soil-Adjusted Vegetation", formula: "((NIR-Red)/(NIR+Red+0.5))*1.5", desc: "Corrects for bare soil reflectance in arid/sparse agro-zones." },
+                    rvi: { label: "RVI — Ratio Vegetation Index", formula: "NIR / Red", desc: "Classic high-contrast ratio for biomass and grain yield estimation." },
+                    ndbi_approx: { label: "NDBI (Approx) — Built-Up Index", formula: "((Red+Blue)/2 - NIR) / (...) ", desc: "High values identify artificial structures, settlements, and roads." },
+                    gci: { label: "GCI — Green Chlorophyll Index", formula: "(NIR / Green) - 1.0", desc: "Estimates total leaf chlorophyll concentration across crop canopy." },
+                  };
+                  const meta = titles[name] || { label: name.toUpperCase(), formula: "", desc: "" };
+
+                  return (
+                    <div key={name} className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 space-y-3">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <h4 className="text-xs font-bold text-slate-200">{meta.label}</h4>
+                          <span className="text-[10px] font-mono text-cyan-400 block">{meta.formula}</span>
+                        </div>
+                        <span className="px-2 py-0.5 rounded bg-slate-800 text-[10px] font-mono text-slate-300 uppercase">
+                          SR Mean: {data.sr.mean.toFixed(3)}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <span className="text-[10px] text-slate-400 font-mono block">10m LR Resolution</span>
+                          {data.lr_visualization ? (
+                            <img
+                              src={data.lr_visualization}
+                              alt={`${name} LR`}
+                              className="w-full h-32 object-cover rounded-lg border border-slate-800"
+                            />
+                          ) : (
+                            <div className="w-full h-32 bg-slate-950 rounded-lg flex items-center justify-center text-[10px] text-slate-600">
+                              LR Unavailable
+                            </div>
+                          )}
+                          <div className="text-[10px] text-slate-400 font-mono flex justify-between">
+                            <span>μ: {data.lr.mean.toFixed(3)}</span>
+                            <span>σ: {data.lr.std.toFixed(3)}</span>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <span className="text-[10px] text-cyan-400 font-mono block">2.5m SR Enhanced</span>
+                          {data.sr_visualization ? (
+                            <img
+                              src={data.sr_visualization}
+                              alt={`${name} SR`}
+                              className="w-full h-32 object-cover rounded-lg border border-cyan-500/40"
+                            />
+                          ) : (
+                            <div className="w-full h-32 bg-slate-950 rounded-lg flex items-center justify-center text-[10px] text-slate-600">
+                              SR Unavailable
+                            </div>
+                          )}
+                          <div className="text-[10px] text-cyan-300 font-mono flex justify-between">
+                            <span>μ: {data.sr.mean.toFixed(3)}</span>
+                            <span>p75: {data.sr.p75.toFixed(3)}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-slate-400 leading-tight">{meta.desc}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div className="p-8 text-center space-y-3 bg-slate-900/40 rounded-xl border border-dashed border-slate-800">
+              <p className="text-xs text-slate-400">
+                Click below to compute the full 7-index spectral suite for the active sample or uploaded tile.
+              </p>
+              <button
+                onClick={handleFetchIndices}
+                className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-semibold text-xs hover:bg-cyan-400 transition"
+              >
+                Compute Spectral Indices
+              </button>
+            </div>
+          )}
         </div>
-      </div>
+      )}
+
+      {/* 3. Farmer Crop Health Tab */}
+      {activeConsoleTab === "crop_health" && (
+        <div className="glass-panel p-6 space-y-6 border-emerald-500/30">
+          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xl">🌱</span>
+                <h3 className="text-base font-bold text-slate-100">
+                  Farmer Field Health & Crop Vigor Dashboard
+                </h3>
+              </div>
+              <p className="text-xs text-slate-400 mt-1 max-w-xl">
+                High-resolution agro-intelligence classifying micro-field stress, vegetation canopy vigor, and moisture status.
+              </p>
+            </div>
+            <button
+              onClick={handleFetchCropHealth}
+              disabled={loadingCropHealth}
+              className="px-4 py-2 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-xs font-semibold hover:bg-emerald-500/20 transition flex items-center gap-2"
+            >
+              {loadingCropHealth ? "Analyzing..." : "Refresh Crop Analysis"}
+            </button>
+          </div>
+
+          {loadingCropHealth ? (
+            <div className="p-12 text-center text-slate-400 space-y-3">
+              <div className="animate-spin w-8 h-8 border-2 border-emerald-400 border-t-transparent rounded-full mx-auto" />
+              <p className="text-xs">Executing multi-class spectral classification and area profiling...</p>
+            </div>
+          ) : cropHealthData ? (
+            <div className="space-y-6">
+              {/* Summary Metric Ribbon */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
+                  <span className="text-[10px] text-slate-400 uppercase font-mono block">Canopy Health Score</span>
+                  <span className="text-lg font-bold text-emerald-400 font-mono">
+                    {(cropHealthData.health_score * 100).toFixed(1)}%
+                  </span>
+                </div>
+                <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
+                  <span className="text-[10px] text-slate-400 uppercase font-mono block">Mean NDVI</span>
+                  <span className="text-lg font-bold text-cyan-400 font-mono">
+                    {cropHealthData.mean_ndvi.toFixed(3)}
+                  </span>
+                </div>
+                <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
+                  <span className="text-[10px] text-slate-400 uppercase font-mono block">Mean EVI</span>
+                  <span className="text-lg font-bold text-indigo-400 font-mono">
+                    {cropHealthData.mean_evi.toFixed(3)}
+                  </span>
+                </div>
+                <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
+                  <span className="text-[10px] text-slate-400 uppercase font-mono block">SR Resolution Uplift</span>
+                  <span className="text-lg font-bold text-amber-400 font-mono">
+                    +{cropHealthData.sr_vs_lr_ndvi_uplift.toFixed(4)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Classification Map + Area Distribution */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+                <div className="space-y-2">
+                  <h4 className="text-xs font-semibold text-slate-300">Classified Crop Zonation Map</h4>
+                  <div className="relative rounded-xl overflow-hidden border border-slate-800 bg-slate-950">
+                    <img
+                      src={cropHealthData.classification_map}
+                      alt="Crop Health Map"
+                      className="w-full h-72 object-contain"
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    {[
+                      { name: "Dense Healthy Crop", color: "bg-emerald-600" },
+                      { name: "Moderate Vegetation", color: "bg-green-400" },
+                      { name: "Sparse / Stressed", color: "bg-amber-400" },
+                      { name: "Bare Soil", color: "bg-amber-800" },
+                      { name: "Water Body", color: "bg-blue-600" },
+                      { name: "Built-up", color: "bg-slate-500" },
+                    ].map((c) => (
+                      <div key={c.name} className="flex items-center gap-1.5 text-[10px] text-slate-300">
+                        <span className={`w-2.5 h-2.5 rounded-sm ${c.color}`} />
+                        <span>{c.name}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <h4 className="text-xs font-semibold text-slate-300">Parcel Area Distribution</h4>
+                  <div className="space-y-2.5">
+                    {Object.entries(cropHealthData.area_statistics).map(([label, stats]) => (
+                      <div key={label} className="space-y-1">
+                        <div className="flex justify-between text-xs">
+                          <span className="text-slate-300">{label}</span>
+                          <span className="font-mono text-slate-400">{stats.percentage}% ({stats.pixel_count} px)</span>
+                        </div>
+                        <div className="w-full bg-slate-900 rounded-full h-1.5 overflow-hidden">
+                          <div
+                            className={`h-full ${
+                              label.includes("Healthy")
+                                ? "bg-emerald-500"
+                                : label.includes("Moderate")
+                                ? "bg-green-400"
+                                : label.includes("Stressed")
+                                ? "bg-amber-400"
+                                : label.includes("Water")
+                                ? "bg-blue-500"
+                                : label.includes("Soil")
+                                ? "bg-amber-700"
+                                : "bg-slate-500"
+                            }`}
+                            style={{ width: `${Math.min(100, stats.percentage)}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Agronomic Recommendations */}
+                  <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-2 mt-4">
+                    <h5 className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
+                      <span>🌾</span>
+                      <span>Agronomic Advisory & Interventions</span>
+                    </h5>
+                    <ul className="space-y-1.5 text-xs text-slate-300">
+                      {cropHealthData.recommendations.map((rec, i) => (
+                        <li key={i} className="flex items-start gap-2">
+                          <span className="text-emerald-400 mt-0.5">•</span>
+                          <span>{rec}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+
+              {/* Disclaimer */}
+              <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-300/80">
+                <strong>Disclaimer:</strong> {cropHealthData.disclaimer}
+              </div>
+            </div>
+          ) : (
+            <div className="p-8 text-center space-y-3 bg-slate-900/40 rounded-xl border border-dashed border-slate-800">
+              <p className="text-xs text-slate-400">
+                Generate high-resolution crop health classification and actionable advisory for the selected tile.
+              </p>
+              <button
+                onClick={handleFetchCropHealth}
+                className="px-4 py-2 rounded-lg bg-emerald-500 text-slate-950 font-semibold text-xs hover:bg-emerald-400 transition"
+              >
+                Assess Crop Health
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 4. Field Boundary Delineator Tab */}
+      {activeConsoleTab === "field_boundary" && (
+        <div className="glass-panel p-6 space-y-6 border-indigo-500/30">
+          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xl">📐</span>
+                <h3 className="text-base font-bold text-slate-100">
+                  Sub-Pixel Field Boundary Delineation
+                </h3>
+              </div>
+              <p className="text-xs text-slate-400 mt-1 max-w-xl">
+                Sobel-gradient boundary detection resolving smallholder agricultural plot edges and cadastral lines invisible at 10m.
+              </p>
+            </div>
+            <button
+              onClick={handleFetchFieldBoundary}
+              disabled={loadingFieldBoundary}
+              className="px-4 py-2 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/30 text-xs font-semibold hover:bg-indigo-500/20 transition flex items-center gap-2"
+            >
+              {loadingFieldBoundary ? "Delineating..." : "Delineate Boundaries"}
+            </button>
+          </div>
+
+          {loadingFieldBoundary ? (
+            <div className="p-12 text-center text-slate-400 space-y-3">
+              <div className="animate-spin w-8 h-8 border-2 border-indigo-400 border-t-transparent rounded-full mx-auto" />
+              <p className="text-xs">Computing gradient field edge vectors across LR and SR spatial domains...</p>
+            </div>
+          ) : fieldBoundaryData ? (
+            <div className="space-y-6">
+              {/* Stat Ribbon */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
+                  <span className="text-[10px] text-slate-400 uppercase font-mono block">Boundary Definition Ratio</span>
+                  <span className="text-lg font-bold text-indigo-400 font-mono">
+                    {fieldBoundaryData.boundary_improvement_ratio.toFixed(2)}×
+                  </span>
+                </div>
+                <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
+                  <span className="text-[10px] text-slate-400 uppercase font-mono block">SR Edge Pixels</span>
+                  <span className="text-lg font-bold text-cyan-400 font-mono">
+                    {fieldBoundaryData.sr_edge_pixel_count.toLocaleString()}
+                  </span>
+                </div>
+                <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
+                  <span className="text-[10px] text-slate-400 uppercase font-mono block">LR Edge Pixels</span>
+                  <span className="text-lg font-bold text-slate-400 font-mono">
+                    {fieldBoundaryData.lr_edge_pixel_count.toLocaleString()}
+                  </span>
+                </div>
+                <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800">
+                  <span className="text-[10px] text-slate-400 uppercase font-mono block">Detection Method</span>
+                  <span className="text-sm font-bold text-amber-400 font-mono uppercase mt-1 block">
+                    {fieldBoundaryData.method}
+                  </span>
+                </div>
+              </div>
+
+              {/* Side-by-side Overlays */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-semibold text-slate-300">10m Native Sentinel-2 (Blended Edges)</span>
+                    <span className="text-[10px] font-mono text-slate-500">Density: {fieldBoundaryData.lr_edge_density}</span>
+                  </div>
+                  <img
+                    src={fieldBoundaryData.lr_edge_overlay}
+                    alt="LR Field Boundaries"
+                    className="w-full h-64 object-cover rounded-lg border border-slate-800"
+                  />
+                  <p className="text-[11px] text-slate-400">
+                    Individual field perimeters blur together due to 10m spatial averaging across adjacent plot furrows.
+                  </p>
+                </div>
+
+                <div className="p-4 rounded-xl bg-slate-900/60 border border-indigo-500/40 space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-semibold text-indigo-300">2.5m BharatSR Enhanced (Sharp Perimeters)</span>
+                    <span className="text-[10px] font-mono text-indigo-400">Density: {fieldBoundaryData.sr_edge_density}</span>
+                  </div>
+                  <img
+                    src={fieldBoundaryData.sr_edge_overlay}
+                    alt="SR Field Boundaries"
+                    className="w-full h-64 object-cover rounded-lg border border-indigo-500/40"
+                  />
+                  <p className="text-[11px] text-slate-400">
+                    Sub-pixel gradient extraction resolves sharp plot boundaries, irrigation channels, and field pathways.
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 text-[11px] text-slate-400">
+                <strong>Technical Notice:</strong> {fieldBoundaryData.disclaimer}
+              </div>
+            </div>
+          ) : (
+            <div className="p-8 text-center space-y-3 bg-slate-900/40 rounded-xl border border-dashed border-slate-800">
+              <p className="text-xs text-slate-400">
+                Extract sharp agricultural perimeters and road edges from the super-resolved satellite tile.
+              </p>
+              <button
+                onClick={handleFetchFieldBoundary}
+                className="px-4 py-2 rounded-lg bg-indigo-500 text-slate-950 font-semibold text-xs hover:bg-indigo-400 transition"
+              >
+                Delineate Boundaries
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 5. Bi-Temporal Change Detection Tab */}
+      {activeConsoleTab === "change_detect" && (
+        <div className="glass-panel p-6 space-y-6 border-amber-500/30">
+          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xl">⏱️</span>
+                <h3 className="text-base font-bold text-slate-100">
+                  Bi-Temporal Agricultural & Land Change Detection
+                </h3>
+              </div>
+              <p className="text-xs text-slate-400 mt-1 max-w-xl">
+                Compare two super-resolved acquisition dates to detect crop growth, harvest loss, seasonal moisture, or tactical terrain modifications.
+              </p>
+            </div>
+          </div>
+
+          {/* Acquisition Run Selection */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 rounded-xl bg-slate-900/80 border border-slate-800">
+            <div>
+              <label className="text-[10px] text-slate-400 uppercase font-mono block mb-1">
+                First Date Run ID (Earlier T1)
+              </label>
+              <input
+                type="text"
+                value={changeRunId1}
+                onChange={(e) => setChangeRunId1(e.target.value)}
+                placeholder="e.g. run_a1b2c3d4"
+                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-xs font-mono text-slate-200 focus:outline-none focus:border-amber-400"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-400 uppercase font-mono block mb-1">
+                Second Date Run ID (Later T2)
+              </label>
+              <input
+                type="text"
+                value={changeRunId2}
+                onChange={(e) => setChangeRunId2(e.target.value)}
+                placeholder="e.g. run_e5f6g7h8"
+                className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-xs font-mono text-slate-200 focus:outline-none focus:border-amber-400"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-400 uppercase font-mono block mb-1">
+                Change Vector Algorithm
+              </label>
+              <div className="flex gap-2">
+                <select
+                  value={changeMethod}
+                  onChange={(e) => setChangeMethod(e.target.value)}
+                  className="flex-1 px-3 py-2 bg-slate-950 border border-slate-800 rounded-lg text-xs font-mono text-slate-200 focus:outline-none focus:border-amber-400"
+                >
+                  <option value="ndvi_diff">NDVI Difference (Canopy)</option>
+                  <option value="spectral_diff">Spectral L1 Diff (4 Bands)</option>
+                  <option value="cvaps">Change Vector Analysis (CVAPS)</option>
+                </select>
+                <button
+                  onClick={handleFetchChangeDetection}
+                  disabled={loadingChangeDetect}
+                  className="px-4 py-2 rounded-lg bg-amber-500 text-slate-950 font-semibold text-xs hover:bg-amber-400 transition"
+                >
+                  {loadingChangeDetect ? "..." : "Detect"}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {activeRunId && (!changeRunId1 || !changeRunId2) && (
+            <div className="flex items-center gap-2 text-xs text-slate-400">
+              <span>Active Run ID: <code className="text-amber-400 font-mono">{activeRunId}</code></span>
+              <button
+                onClick={() => {
+                  if (!changeRunId1) setChangeRunId1(activeRunId);
+                  else if (!changeRunId2) setChangeRunId2(activeRunId);
+                }}
+                className="text-[11px] text-cyan-400 hover:underline"
+              >
+                Use as {!changeRunId1 ? "T1" : "T2"}
+              </button>
+            </div>
+          )}
+
+          {loadingChangeDetect ? (
+            <div className="p-12 text-center text-slate-400 space-y-3">
+              <div className="animate-spin w-8 h-8 border-2 border-amber-400 border-t-transparent rounded-full mx-auto" />
+              <p className="text-xs">Computing bi-temporal difference tensors across 4-band reflectance cubes...</p>
+            </div>
+          ) : changeDetectData ? (
+            <div className="space-y-6">
+              {/* Interpretation Verdict */}
+              <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] text-amber-300 uppercase font-mono block">Automated Interpretation</span>
+                  <h4 className="text-sm font-bold text-amber-200">{changeDetectData.interpretation}</h4>
+                </div>
+                <div className="text-right">
+                  <span className="text-xs font-mono font-bold text-amber-300">
+                    {changeDetectData.statistics.significant_change_pct}%
+                  </span>
+                  <span className="text-[10px] text-slate-400 block">Significant Area Shift</span>
+                </div>
+              </div>
+
+              {/* 3 Change Heatmaps */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 space-y-2">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="font-semibold text-slate-300">NDVI Difference Map</span>
+                    <span className="text-[10px] font-mono text-cyan-400">Δ: {changeDetectData.statistics.ndvi_change}</span>
+                  </div>
+                  <img
+                    src={changeDetectData.ndvi_difference_map}
+                    alt="NDVI Difference"
+                    className="w-full h-44 object-cover rounded-lg border border-slate-800"
+                  />
+                  <p className="text-[10px] text-slate-400">Green = Vegetation growth / crop expansion; Red = Canopy loss or harvesting.</p>
+                </div>
+
+                <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 space-y-2">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="font-semibold text-slate-300">Spectral Absolute Delta</span>
+                    <span className="text-[10px] font-mono text-slate-400">μ: {changeDetectData.statistics.mean_spectral_diff}</span>
+                  </div>
+                  <img
+                    src={changeDetectData.spectral_difference_map}
+                    alt="Spectral Difference"
+                    className="w-full h-44 object-cover rounded-lg border border-slate-800"
+                  />
+                  <p className="text-[10px] text-slate-400">Multi-band L1 distance identifying material alterations regardless of vegetation.</p>
+                </div>
+
+                <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 space-y-2">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="font-semibold text-slate-300">Change Vector Magnitude</span>
+                    <span className="text-[10px] font-mono text-amber-400">Max: {changeDetectData.statistics.max_change_magnitude}</span>
+                  </div>
+                  <img
+                    src={changeDetectData.change_magnitude_map}
+                    alt="Change Magnitude"
+                    className="w-full h-44 object-cover rounded-lg border border-slate-800"
+                  />
+                  <p className="text-[10px] text-slate-400">Euclidean norm across (B2, B3, B4, B8) feature hyperspace.</p>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 text-[11px] text-slate-400">
+                <strong>Notice:</strong> {changeDetectData.disclaimer}
+              </div>
+            </div>
+          ) : (
+            <div className="p-8 text-center space-y-3 bg-slate-900/40 rounded-xl border border-dashed border-slate-800">
+              <p className="text-xs text-slate-400">
+                Enter two prior Super-Resolution Run IDs to perform high-precision bi-temporal change analysis.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 6. Batch & WebSocket Monitor Tab */}
+      {activeConsoleTab === "batch" && (
+        <div className="glass-panel p-6 space-y-6 border-cyan-500/30">
+          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xl">⚡</span>
+                <h3 className="text-base font-bold text-slate-100">
+                  Batch Processor & WebSocket Real-Time Stream
+                </h3>
+              </div>
+              <p className="text-xs text-slate-400 mt-1 max-w-xl">
+                Submit multiple Sentinel-2 tiles simultaneously with asynchronous ThreadPool workers and real-time WebSocket progress telemetry.
+              </p>
+            </div>
+          </div>
+
+          {/* Batch Selector & Trigger */}
+          <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-4">
+            <div>
+              <h4 className="text-xs font-semibold text-slate-200 mb-2">Select Benchmark Sample Tiles for Parallel Batch</h4>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {samples.map((s) => {
+                  const isChecked = batchSampleIds.includes(s.id);
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => {
+                        if (isChecked) {
+                          setBatchSampleIds(batchSampleIds.filter((id: string) => id !== s.id));
+                        } else {
+                          setBatchSampleIds([...batchSampleIds, s.id]);
+                        }
+                      }}
+                      className={`p-2.5 rounded-lg border text-left transition flex items-center justify-between text-xs ${
+                        isChecked
+                          ? "bg-cyan-500/20 border-cyan-500/50 text-cyan-300"
+                          : "bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      <span className="truncate">{s.title || s.id}</span>
+                      <span className="font-mono text-[10px] ml-1">{isChecked ? "✓" : "+"}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+              <span className="text-xs text-slate-400">
+                Selected: <strong className="text-cyan-400 font-mono">{batchSampleIds.length}</strong> tiles
+              </span>
+              <button
+                onClick={handleBatchSubmit}
+                disabled={loadingBatch || batchSampleIds.length === 0}
+                className="px-5 py-2 rounded-xl bg-cyan-500 text-slate-950 font-bold text-xs hover:bg-cyan-400 disabled:opacity-50 transition shadow-lg shadow-cyan-500/20"
+              >
+                {loadingBatch ? "Dispatching..." : `Dispatch Parallel Batch (${batchSampleIds.length})`}
+              </button>
+            </div>
+          </div>
+
+          {/* Live WebSocket Progress Monitor */}
+          {wsStatus && (
+            <div className="p-4 rounded-xl bg-slate-950 border border-cyan-500/40 space-y-2">
+              <div className="flex justify-between items-center text-xs">
+                <span className="font-semibold text-cyan-300 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+                  WebSocket Live Telemetry Stream
+                </span>
+                <span className="font-mono text-cyan-400">{wsProgress}%</span>
+              </div>
+              <div className="w-full bg-slate-900 rounded-full h-2 overflow-hidden">
+                <div
+                  className="bg-cyan-400 h-full transition-all duration-300"
+                  style={{ width: `${wsProgress}%` }}
+                />
+              </div>
+              <div className="text-[10px] font-mono text-slate-500">Status: {wsStatus}</div>
+            </div>
+          )}
+
+          {/* Batch Status Table */}
+          {batchData && (
+            <div className="space-y-3">
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-slate-300 font-semibold">
+                  Batch Run: <code className="text-cyan-400 font-mono">{batchData.batch_id}</code>
+                </span>
+                <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[10px] uppercase">
+                  {batchData.completed}/{batchData.total} Completed ({batchData.overall_status})
+                </span>
+              </div>
+
+              <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950">
+                <table className="w-full text-left text-xs border-collapse font-mono">
+                  <thead>
+                    <tr className="border-b border-slate-800 text-slate-400 text-[11px]">
+                      <th className="py-2.5 px-3">Job ID</th>
+                      <th className="py-2.5 px-3">Status</th>
+                      <th className="py-2.5 px-3">Progress</th>
+                      <th className="py-2.5 px-3">Latency</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60">
+                    {batchData.jobs.map((job) => (
+                      <tr key={job.job_id} className="hover:bg-slate-900/40">
+                        <td className="py-2.5 px-3 text-cyan-400 font-bold">{job.job_id}</td>
+                        <td className="py-2.5 px-3">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] uppercase ${
+                              job.status === "completed"
+                                ? "bg-emerald-950 text-emerald-400 border border-emerald-800"
+                                : job.status === "failed"
+                                ? "bg-red-950 text-red-400 border border-red-800"
+                                : "bg-cyan-950 text-cyan-400 border border-cyan-800 animate-pulse"
+                            }`}
+                          >
+                            {job.status}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-slate-300">{job.progress_pct || 0}%</td>
+                        <td className="py-2.5 px-3 text-slate-400">
+                          {job.inference_time_s ? `${job.inference_time_s}s` : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  </div>
 
       {/* NTRO SIH26142 Mission Briefing Modal */}
       {showMissionModal && (

@@ -53,6 +53,48 @@ models:
     num_params: 356816
     description: "Lightweight RCAN-inspired architecture with Channel Attention, residual learning anchor, and heteroscedastic uncertainty head"
 
+  swinir:
+    id: "swinir"
+    name: "SwinIR Super-Resolution (Swin Transformer)"
+    n_bands: 4
+    embed_dim: 60
+    depths: [6, 6, 6]
+    num_heads: [6, 6, 6]
+    window_size: 4
+    scale_factor: 4
+    predict_uncertainty: true
+    num_params: 820000
+    description: "Shifted-window attention Transformer with heteroscedastic uncertainty head"
+
+  hat:
+    id: "hat"
+    name: "HAT Super-Resolution (Hybrid Attention Transformer)"
+    n_bands: 4
+    embed_dim: 48
+    depths: [4, 4, 4]
+    num_heads: [4, 4, 4]
+    window_size: 4
+    scale_factor: 4
+    predict_uncertainty: true
+    num_params: 650000
+    description: "Hybrid window + channel attention Transformer"
+
+  diffusion:
+    id: "diffusion"
+    name: "DiffusionSR (4-Step DDIM Conditional)"
+    n_bands: 4
+    scale_factor: 4
+    num_diffusion_steps: 4
+    num_params: 900000
+    description: "Lightweight conditional DDPM with 4-step DDIM inference"
+
+  ensemble:
+    id: "ensemble"
+    name: "EnsembleSR (RCAN + SwinIR Weighted Average)"
+    component_models: ["rcan", "swinir"]
+    weights: [0.6, 0.4]
+    description: "Inference-time weighted ensemble"
+
 training:
   batch_size: 4
   epochs: 10
@@ -77,6 +119,9 @@ tiling:
 
 evaluation:
   degradation_operator: "4x4 area average aligned with LR grid"
+  lpips: true
+  ece: true
+  fid: false
   metrics:
     - "psnr_db"
     - "ssim"
@@ -89,3 +134,12 @@ evaluation:
   uncertainty_calibration:
     confidence_levels: [0.68, 0.95]
     high_error_quantile: 0.85
+
+farmer_features:
+  spectral_indices: ["ndvi", "ndwi", "evi", "savi", "rvi", "ndbi_approx", "gci"]
+  crop_health_classes: ["Dense Healthy Crop", "Moderate Vegetation", "Sparse/Stressed", "Bare Soil", "Water", "Built-up"]
+  ndvi_thresholds:
+    dense_healthy: 0.6
+    moderate: 0.3
+    sparse: 0.1
+  change_detection_methods: ["ndvi_diff", "spectral_diff", "cvaps"]

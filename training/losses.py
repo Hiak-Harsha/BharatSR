@@ -172,6 +172,57 @@ class UncertaintyLoss(nn.Module):
         return loss.mean()
 
 
+class LPIPSSpectralLoss(nn.Module):
+    """
+    Adapted LPIPS (Learned Perceptual Image Patch Similarity) for 4-band satellite imagery.
+
+    Uses VGG16 feature space on the 3-band RGB subset (B4, B3, B2) for perceptual quality.
+    The NIR band (B8) is evaluated separately via L1 loss (no perceptual VGG equivalent).
+
+    NOTE: Falls back gracefully to gradient similarity if torchvision is unavailable.
+    """
+
+    def __init__(self, use_gpu: bool = False):
+        super().__init__()
+        self._has_vgg = False
+        try:
+            from torchvision.models import vgg16
+            try:
+                vgg = vgg16(weights=None)
+            except Exception:
+                vgg = vgg16(pretrained=False)
+            self.feature_extractor = nn.Sequential(*list(vgg.features)[:10])
+            self.feature_extractor.eval()
+            for p in self.feature_extractor.parameters():
+                p.requires_grad = False
+            self._has_vgg = True
+        except Exception:
+            self._has_vgg = False
+        self.l1 = nn.L1Loss()
+
+    def forward(self, sr: torch.Tensor, hr: torch.Tensor) -> torch.Tensor:
+        sr_rgb = sr[:, [2, 1, 0], :, :]
+        hr_rgb = hr[:, [2, 1, 0], :, :]
+
+        if self._has_vgg:
+            try:
+                mean = torch.tensor([0.485, 0.456, 0.406], device=sr.device).view(1, 3, 1, 1)
+                std = torch.tensor([0.229, 0.224, 0.225], device=sr.device).view(1, 3, 1, 1)
+                sr_norm = (torch.clamp(sr_rgb, 0.0, 1.0) - mean) / std
+                hr_norm = (torch.clamp(hr_rgb, 0.0, 1.0) - mean) / std
+
+                feat_sr = self.feature_extractor(sr_norm)
+                feat_hr = self.feature_extractor(hr_norm)
+                perceptual_loss = self.l1(feat_sr, feat_hr)
+            except Exception:
+                perceptual_loss = self.l1(sr_rgb, hr_rgb)
+        else:
+            perceptual_loss = self.l1(sr_rgb, hr_rgb)
+
+        nir_loss = self.l1(sr[:, 3:4], hr[:, 3:4])
+        return 0.7 * perceptual_loss + 0.3 * nir_loss
+
+
 class BharatSRCombinedLoss(nn.Module):
     """
     Complete Physics-Constrained Multi-Task Loss:
@@ -250,16 +301,23 @@ def compute_psnr(sr, hr, max_val=1.0):
     return 10 * math.log10(max_val ** 2 / mse)
 
 
-def compute_ssim(sr, hr, win_size=7):
+SENTINEL2_BAND_WEIGHTS = [0.20, 0.25, 0.25, 0.30]  # B2, B3, B4, B8
+
+
+def compute_ssim(sr, hr, win_size=7, band_weights=None):
     """
     Structural Similarity Index.
     Higher is better. Range [0, 1]. Good SR: > 0.8.
-
-    Simplified implementation operating on each band independently.
+    For multi-band Sentinel-2 imagery, applies band-weighted average (B2: 0.20, B3: 0.25, B4: 0.25, B8: 0.30).
     """
     if sr.ndim == 3:
-        # Multi-band: average SSIM across bands
-        return np.mean([compute_ssim(sr[b], hr[b], win_size) for b in range(sr.shape[0])])
+        if band_weights is None:
+            band_weights = SENTINEL2_BAND_WEIGHTS
+        c = sr.shape[0]
+        weights = band_weights[:c]
+        total_w = sum(weights)
+        band_ssims = [compute_ssim(sr[b], hr[b], win_size) for b in range(c)]
+        return float(sum((w / total_w) * s for w, s in zip(weights, band_ssims)))
 
     C1 = 0.01 ** 2
     C2 = 0.03 ** 2

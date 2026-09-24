@@ -92,13 +92,16 @@ class JobStore:
                    metrics: dict = None, error: str = None,
                    inference_time: float = None, progress_pct: int = 100):
         """Update job status and final results."""
+        completed_at = datetime.utcnow().isoformat() if status in ("completed", "failed", "cancelled") else None
         with self._lock:
             conn = self._get_conn()
             conn.execute(
-                """UPDATE jobs SET status=?, completed_at=?, result_path=?,
+                """UPDATE jobs SET status=?,
+                   completed_at=COALESCE(?, completed_at),
+                   result_path=?,
                    metrics_json=?, error_message=?, inference_time_s=?, progress_pct=?
                    WHERE job_id=?""",
-                (status, datetime.utcnow().isoformat(), result_path,
+                (status, completed_at, result_path,
                  json.dumps(metrics) if metrics else None, error,
                  inference_time, progress_pct, job_id)
             )

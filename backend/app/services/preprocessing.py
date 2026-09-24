@@ -10,10 +10,13 @@ Canonical Sentinel-2 4-Band Input Order:
 - B8 (NIR, 842nm)   -> Index 3
 """
 
+import base64
 import io
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 from PIL import Image
+import torch
+import torch.nn.functional as F
 
 BAND_INDEX: Dict[str, int] = {
     "B2": 0,
@@ -345,9 +348,9 @@ def export_geotiff_bytes(img: np.ndarray, geo_metadata: dict = None, scale_facto
     in_affine = Affine(*raw_transform[:6])
     out_affine = Affine(
         in_affine.a / scale_factor,
-        in_affine.b / scale_factor,
+        in_affine.b,
         in_affine.c,
-        in_affine.d / scale_factor,
+        in_affine.d,
         in_affine.e / scale_factor,
         in_affine.f,
     )
@@ -380,3 +383,161 @@ def export_geotiff_bytes(img: np.ndarray, geo_metadata: dict = None, scale_facto
                 spectral_bands="B2, B3, B4, B8 (Selected 4-band subset of Sentinel-2)",
             )
         return bytes(memfile.getbuffer())
+
+
+def apply_scl_mask(
+    img: np.ndarray,
+    scl_band: np.ndarray,
+    valid_classes: Optional[List[int]] = None,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Apply Sentinel-2 Scene Classification Layer (SCL) to mask invalid pixels.
+
+    SCL class meanings:
+    0: No data, 1: Defective, 2: Dark pixels, 3: Cloud shadows
+    4: Vegetation, 5: Not-vegetated, 6: Water, 7: Unclassified
+    8: Cloud medium prob, 9: Cloud high prob, 10: Cirrus, 11: Snow/Ice
+
+    Default valid classes: [4, 5, 6, 7, 11] — surface pixels (excludes clouds/shadows)
+    Returns: (masked_img, valid_mask) where masked_img has NaN at invalid pixels.
+    """
+    if valid_classes is None:
+        valid_classes = [4, 5, 6, 7, 11]
+    valid_mask = np.isin(scl_band, valid_classes)
+    masked = img.copy().astype(np.float32)
+    masked[:, ~valid_mask] = np.nan
+    return masked, valid_mask
+
+
+def compute_cloud_fraction(scl_band: np.ndarray) -> float:
+    """Return fraction of pixels classified as cloud (SCL 8, 9, 10)."""
+    cloud_classes = [8, 9, 10]
+    cloud_mask = np.isin(scl_band, cloud_classes)
+    return float(np.mean(cloud_mask))
+
+
+def register_lr_hr_pair(
+    lr: np.ndarray, hr: np.ndarray, scale_factor: int = 4
+) -> Tuple[np.ndarray, np.ndarray, dict]:
+    """
+    Sub-pixel spatial registration of LR/HR pairs using phase correlation.
+    Corrects for small misalignments between acquisition dates.
+
+    Returns: (lr_aligned, hr_aligned, registration_info)
+    """
+    from scipy.ndimage import shift as nd_shift
+    from numpy.fft import fft2, ifft2, fftshift
+
+    lr_red = lr[2]  # B4
+    hr_red = hr[2]  # B4
+
+    lr_red_up = (
+        F.interpolate(
+            torch.from_numpy(lr_red[None, None]).float(),
+            size=hr_red.shape,
+            mode="bicubic",
+            align_corners=False,
+        )
+        .squeeze()
+        .numpy()
+    )
+
+    f1 = fft2(lr_red_up)
+    f2 = fft2(hr_red)
+    cross_power = (f1 * f2.conj()) / (np.abs(f1 * f2.conj()) + 1e-10)
+    corr = np.real(fftshift(ifft2(cross_power)))
+    peak = np.unravel_index(corr.argmax(), corr.shape)
+    dy = int(peak[0] - corr.shape[0] // 2)
+    dx = int(peak[1] - corr.shape[1] // 2)
+
+    hr_shifted = np.stack(
+        [nd_shift(hr[b], (dy, dx), mode="reflect") for b in range(hr.shape[0])]
+    )
+
+    return lr, hr_shifted, {"shift_y": dy, "shift_x": dx, "peak_corr": float(corr.max())}
+
+
+def compute_spectral_indices(
+    img: np.ndarray, band_index: Optional[Dict[str, int]] = None
+) -> Dict[str, np.ndarray]:
+    """
+    Compute all standard Sentinel-2 spectral indices from 4-band reflectance array.
+
+    All formulas use physical reflectance [0, ~1+].
+    Division by zero protected with epsilon = 1e-7.
+
+    Returns dict of index_name -> (H, W) float32 array.
+    """
+    if band_index is None:
+        band_index = {"B2": 0, "B3": 1, "B4": 2, "B8": 3}
+
+    eps = 1e-7
+    blue = img[band_index["B2"]].astype(np.float32)
+    green = img[band_index["B3"]].astype(np.float32)
+    red = img[band_index["B4"]].astype(np.float32)
+    nir = img[band_index["B8"]].astype(np.float32)
+
+    indices = {}
+
+    # NDVI: Normalized Difference Vegetation Index
+    indices["ndvi"] = (nir - red) / (nir + red + eps)
+
+    # NDWI: Normalized Difference Water Index (McFeeters 1996)
+    indices["ndwi"] = (green - nir) / (green + nir + eps)
+
+    # EVI: Enhanced Vegetation Index (Huete et al. 2002)
+    # EVI = 2.5 * (NIR - RED) / (NIR + 6*RED - 7.5*BLUE + 1)
+    indices["evi"] = 2.5 * (nir - red) / (nir + 6.0 * red - 7.5 * blue + 1.0 + eps)
+
+    # SAVI: Soil-Adjusted Vegetation Index (Huete 1988, L=0.5)
+    L = 0.5
+    indices["savi"] = ((nir - red) / (nir + red + L + eps)) * (1.0 + L)
+
+    # RVI: Ratio Vegetation Index
+    indices["rvi"] = nir / (red + eps)
+
+    # NDBI: Normalized Difference Built-up Index (proxy using Red and Blue for SWIR)
+    swir_proxy = (red + blue) / 2.0
+    indices["ndbi_approx"] = (swir_proxy - nir) / (swir_proxy + nir + eps)
+
+    # GCI: Green Chlorophyll Index
+    indices["gci"] = (nir / (green + eps)) - 1.0
+
+    return indices
+
+
+def indices_to_visualizations(indices: Dict[str, np.ndarray]) -> Dict[str, str]:
+    """Convert spectral indices to base64 PNG heatmaps for API responses."""
+    import matplotlib.pyplot as plt
+
+    colormaps = {
+        "ndvi": ("RdYlGn", -0.2, 0.8),
+        "ndwi": ("RdYlBu", -0.5, 0.5),
+        "evi": ("YlGn", -0.5, 1.0),
+        "savi": ("RdYlGn", -0.2, 0.8),
+        "rvi": ("Greens", 0.0, 5.0),
+        "ndbi_approx": ("copper", -0.5, 0.5),
+        "gci": ("Greens", -1.0, 5.0),
+    }
+
+    result = {}
+    for name, arr in indices.items():
+        cmap_name, vmin, vmax = colormaps.get(name, ("viridis", None, None))
+        valid_vals = arr[~np.isnan(arr)]
+        if valid_vals.size == 0:
+            norm = np.zeros_like(arr, dtype=np.float32)
+        elif vmin is not None and vmax is not None:
+            norm = np.clip((arr - vmin) / ((vmax - vmin) + 1e-7), 0.0, 1.0)
+        else:
+            p2, p98 = np.nanpercentile(arr, 2), np.nanpercentile(arr, 98)
+            norm = np.clip((arr - p2) / (p98 - p2 + 1e-7), 0.0, 1.0)
+
+        # Handle NaNs
+        norm = np.nan_to_num(norm, nan=0.0)
+
+        cmap = plt.get_cmap(cmap_name)
+        rgb = (cmap(norm)[:, :, :3] * 255).astype(np.uint8)
+        buf = io.BytesIO()
+        Image.fromarray(rgb).save(buf, format="PNG")
+        result[name] = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+    return result

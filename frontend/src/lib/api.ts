@@ -483,3 +483,192 @@ export async function getDownstreamMasks(
 
   return res.json();
 }
+
+export interface SpectralIndicesData {
+  status: string;
+  indices: Record<
+    string,
+    {
+      sr: { mean: number; std: number; p25: number; p75: number };
+      lr: { mean: number; std: number };
+      sr_visualization: string;
+      lr_visualization: string;
+    }
+  >;
+}
+
+export async function getSpectralIndices(
+  sampleId?: string,
+  runId?: string,
+  modelId: string = "rcan"
+): Promise<SpectralIndicesData> {
+  const formData = new FormData();
+  if (runId) formData.append("run_id", runId);
+  else if (sampleId) formData.append("sample_id", sampleId);
+  formData.append("model_id", modelId);
+
+  const res = await fetch(`${API_BASE}/api/indices`, { method: "POST", body: formData });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Indices computation failed");
+  }
+  return res.json();
+}
+
+export interface CropHealthData {
+  status: string;
+  disclaimer: string;
+  model_id: string;
+  classification_map: string;
+  area_statistics: Record<string, { pixel_count: number; percentage: number }>;
+  health_score: number;
+  mean_ndvi: number;
+  mean_evi: number;
+  sr_vs_lr_ndvi_uplift: number;
+  recommendations: string[];
+  class_legend: Record<string, string>;
+}
+
+export async function getCropHealth(
+  sampleId?: string,
+  runId?: string,
+  modelId: string = "rcan"
+): Promise<CropHealthData> {
+  const formData = new FormData();
+  if (runId) formData.append("run_id", runId);
+  else if (sampleId) formData.append("sample_id", sampleId);
+  formData.append("model_id", modelId);
+
+  const res = await fetch(`${API_BASE}/api/crop-health`, { method: "POST", body: formData });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Crop health analysis failed");
+  }
+  return res.json();
+}
+
+export interface FieldBoundaryData {
+  status: string;
+  disclaimer: string;
+  model_id: string;
+  sr_edge_overlay: string;
+  lr_edge_overlay: string;
+  sr_edge_density: number;
+  lr_edge_density: number;
+  boundary_improvement_ratio: number;
+  sr_edge_pixel_count: number;
+  lr_edge_pixel_count: number;
+  method: string;
+}
+
+export async function getFieldBoundary(
+  sampleId?: string,
+  runId?: string,
+  modelId: string = "rcan",
+  method: string = "gradient"
+): Promise<FieldBoundaryData> {
+  const formData = new FormData();
+  if (runId) formData.append("run_id", runId);
+  else if (sampleId) formData.append("sample_id", sampleId);
+  formData.append("model_id", modelId);
+  formData.append("method", method);
+
+  const res = await fetch(`${API_BASE}/api/field-boundary`, { method: "POST", body: formData });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Field boundary detection failed");
+  }
+  return res.json();
+}
+
+export interface ChangeDetectionData {
+  status: string;
+  run_id_t1: string;
+  run_id_t2: string;
+  method: string;
+  ndvi_difference_map: string;
+  spectral_difference_map: string;
+  change_magnitude_map: string;
+  statistics: {
+    mean_ndvi_t1: number;
+    mean_ndvi_t2: number;
+    ndvi_change: number;
+    mean_spectral_diff: number;
+    significant_change_pct: number;
+    max_change_magnitude: number;
+  };
+  interpretation: string;
+  disclaimer: string;
+}
+
+export async function getChangeDetection(
+  runIdT1: string,
+  runIdT2: string,
+  method: string = "ndvi_diff"
+): Promise<ChangeDetectionData> {
+  const formData = new FormData();
+  formData.append("run_id_t1", runIdT1);
+  formData.append("run_id_t2", runIdT2);
+  formData.append("method", method);
+
+  const res = await fetch(`${API_BASE}/api/change-detect`, { method: "POST", body: formData });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Change detection failed");
+  }
+  return res.json();
+}
+
+export interface BatchSubmitData {
+  status: string;
+  batch_id: string;
+  job_ids: string[];
+  total: number;
+  status_url: string;
+}
+
+export async function submitBatch(
+  sampleIds?: string,
+  files?: File[],
+  modelId: string = "rcan",
+  quality: string = "fast"
+): Promise<BatchSubmitData> {
+  const formData = new FormData();
+  if (sampleIds) formData.append("sample_ids", sampleIds);
+  if (files) {
+    for (const f of files) {
+      formData.append("files", f);
+    }
+  }
+  formData.append("model_id", modelId);
+  formData.append("quality", quality);
+
+  const res = await fetch(`${API_BASE}/api/batch`, { method: "POST", body: formData });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Batch submission failed");
+  }
+  return res.json();
+}
+
+export interface BatchStatusData {
+  batch_id: string;
+  overall_status: string;
+  completed: number;
+  failed: number;
+  total: number;
+  jobs: any[];
+}
+
+export async function getBatchStatus(batchId: string): Promise<BatchStatusData> {
+  const res = await fetch(`${API_BASE}/api/batch/${encodeURIComponent(batchId)}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to get batch status: ${res.statusText}`);
+  return res.json();
+}
+
+export function getWebSocketInferenceUrl(jobId: string): string {
+  if (typeof window === "undefined") return "";
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const host = window.location.host;
+  return `${proto}//${host}/ws/inference/${encodeURIComponent(jobId)}`;
+}
