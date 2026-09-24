@@ -290,7 +290,9 @@ python tools/test_geotiff_roundtrip.py
 pytest -q
 
 # 13. Package Clean Deterministic Submission Archive
-python tools/package_submission.py
+python tools/package_submission.py --profile standard   # ~35MB (Portal submission with all weights & demo tiles)
+# Or for email attachment limits (<25MB):
+python tools/package_submission.py --profile email      # ~12MB (Email-safe archive)
 ```
 
 ---
