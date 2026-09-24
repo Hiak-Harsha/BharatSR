@@ -348,10 +348,6 @@ def _run_compare_sync(
         except Exception as e:
             logger.warning(f"Could not cache compare run: {e}")
 
-    for m_id in model_ids:
-        if "_sr_array" in results[m_id]:
-            results[m_id].pop("_sr_array")
-
     response = {
         "status": "success",
         "run_id": run_id,

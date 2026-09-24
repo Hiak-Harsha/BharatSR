@@ -237,7 +237,7 @@ class CropHealthResponse(BaseModel):
     mean_evi: float
     sr_vs_lr_ndvi_uplift: float
     recommendations: List[str]
-    class_legend: Dict[int, str]
+    class_legend: Dict[str, str]
 
 
 class FieldBoundaryResponse(BaseModel):

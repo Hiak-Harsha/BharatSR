@@ -213,7 +213,6 @@ def execute_model_sr(
         "metrics": metrics,
         "uncertainty": uncertainty_dict,
         "error_map": error_dict,
-        "_sr_array": sr_image,
     }
 
     return InferenceResult(
