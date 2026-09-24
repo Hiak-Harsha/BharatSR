@@ -3,7 +3,12 @@
  * Interfaces with FastAPI backend at http://127.0.0.1:8000
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+// In browser environments, use relative URLs ("") so Next.js rewrites proxy to backend seamlessly.
+// In SSR or when NEXT_PUBLIC_API_URL is explicitly set, use that URL.
+const API_BASE =
+  process.env.NEXT_PUBLIC_API_URL !== undefined
+    ? process.env.NEXT_PUBLIC_API_URL
+    : (typeof window !== "undefined" ? "" : "http://127.0.0.1:8000");
 
 export interface ModelInfo {
   id: string;
