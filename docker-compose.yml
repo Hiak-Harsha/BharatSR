@@ -1,3 +1,7 @@
+# BharatSR (SIH26142) — Single-Node Production Deployment
+# Architecture: Single-node FastAPI + SQLite persistent JobStore + ThreadPoolExecutor
+# Eliminates external queue bloat (Redis) while guaranteeing ACID job durability.
+
 services:
   backend:
     build:
@@ -10,20 +14,19 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - PORT=8000
-      - REDIS_URL=redis://redis:6379/0
-      - WORKERS=4
+      - BHARATSR_MAX_WORKERS=4
+      - BHARATSR_CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
     volumes:
       - ./backend/weights:/app/backend/weights:ro
       - ./backend/sample_tiles:/app/backend/sample_tiles:ro
       - ./backend/runs:/app/backend/runs
+      - ./backend/bharatsr.db:/app/backend/bharatsr.db
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 15s
       timeout: 5s
       retries: 3
       start_period: 15s
-    depends_on:
-      - redis
 
   frontend:
     build:
@@ -41,14 +44,3 @@ services:
       backend:
         condition: service_healthy
 
-  redis:
-    image: redis:7-alpine
-    container_name: bharatsr-redis
-    restart: unless-stopped
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-
-volumes:
-  redis_data:
