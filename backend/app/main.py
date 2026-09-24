@@ -32,7 +32,7 @@ from backend.app.schemas import (
     ReportResponse, DownstreamMasksResponse, DownstreamTaskItem, DownstreamTaskMetrics
 )
 from backend.app.services.inference import (
-    model_registry, run_inference, run_bicubic_baseline, run_tiled_inference
+    model_registry, run_inference, run_inference_ensembled, run_bicubic_baseline, run_tiled_inference
 )
 from backend.app.services.preprocessing import (
     load_image_from_bytes, load_sample_tile, numpy_to_png_bytes,
@@ -174,9 +174,23 @@ def _load_input_data(sample_id: Optional[str], file_bytes: Optional[bytes]) -> T
         raise HTTPException(status_code=400, detail="Provide either 'file' or 'sample_id'")
 
 
-def _execute_model_sr(model_id: str, lr_image: np.ndarray, hr_image: Optional[np.ndarray], scale_factor: int = 4) -> Dict[str, Any]:
-    """Executes a single model inference and returns formatted results."""
+def _execute_model_sr(
+    model_id: str,
+    lr_image: np.ndarray,
+    hr_image: Optional[np.ndarray],
+    scale_factor: int = 4,
+    quality: str = "fast",
+) -> Dict[str, Any]:
+    """
+    Executes a single model inference and returns formatted results.
+
+    quality="fast" (default): single forward pass.
+    quality="high": geometric self-ensemble (4x flip-averaged TTA) -- no
+    retraining required, ~4x latency, typically lower SAM / higher PSNR.
+    Ignored for the bicubic baseline (nothing to ensemble).
+    """
     uncertainty_dict = None
+    use_ensemble = quality == "high"
 
     if model_id == "bicubic":
         sr_image, latency = run_bicubic_baseline(lr_image, scale_factor=scale_factor)
@@ -194,6 +208,11 @@ def _execute_model_sr(model_id: str, lr_image: np.ndarray, hr_image: Optional[np
                 tile_size=64,
                 overlap=16,
                 device=model_registry.device,
+                use_ensemble=use_ensemble,
+            )
+        elif use_ensemble:
+            sr_image, latency, uncertainty_map = run_inference_ensembled(
+                model, lr_image, scale_factor, model_registry.device
             )
         else:
             sr_image, latency, uncertainty_map = run_inference(
@@ -250,6 +269,7 @@ def _execute_model_sr(model_id: str, lr_image: np.ndarray, hr_image: Optional[np
 
     return {
         "model_id": model_id,
+        "quality": "high" if use_ensemble else "fast",
         "inference_time_s": round(latency, 4),
         "shape": list(sr_image.shape),
         "image": sr_b64,
@@ -261,7 +281,7 @@ def _execute_model_sr(model_id: str, lr_image: np.ndarray, hr_image: Optional[np
     }
 
 
-def _async_worker(job_id: str, sample_id: Optional[str], file_bytes: Optional[bytes], model_id: str):
+def _async_worker(job_id: str, sample_id: Optional[str], file_bytes: Optional[bytes], model_id: str, quality: str = "fast"):
     """Background task for async processing with progress and cancellation checks."""
     try:
         assert job_store is not None
@@ -279,7 +299,7 @@ def _async_worker(job_id: str, sample_id: Optional[str], file_bytes: Optional[by
         model_meta = model_registry.get_metadata(model_id) or {}
         scale_factor = model_meta.get("scale_factor", 4)
 
-        result = _execute_model_sr(model_id, lr_image, hr_image, scale_factor)
+        result = _execute_model_sr(model_id, lr_image, hr_image, scale_factor, quality=quality)
         sr_array = result.pop("_sr_array")
         job_store.update_progress(job_id, 80)
 
@@ -413,19 +433,79 @@ async def list_samples():
     return SamplesListResponse(samples=samples)
 
 
+@app.get("/api/samples/{sample_id}/preview")
+async def sample_preview(sample_id: str, crop: int = 32):
+    """
+    Small, fast live-inference preview for a sample tile: LR / Bicubic / BharatSR
+    (/ Ground Truth if available), each as a base64 RGB PNG.
+
+    Purpose-built for the landing page's "same tile, four ways of seeing it"
+    strip -- this is real inference on a small center crop, not a mock image,
+    so the marketing view and the console never show different claims.
+    """
+    sample_tiles_dir = Path(__file__).parent.parent / "sample_tiles"
+    sample_path = sample_tiles_dir / f"{sample_id}.npz"
+    if not sample_path.exists():
+        raise HTTPException(status_code=404, detail=f"Sample '{sample_id}' not found")
+
+    lr_image, hr_image = load_sample_tile(str(sample_path))
+    c, h, w = lr_image.shape
+    crop = max(8, min(crop, h, w))
+    y0 = max(0, (h - crop) // 2)
+    x0 = max(0, (w - crop) // 2)
+    lr_crop = lr_image[:, y0:y0 + crop, x0:x0 + crop]
+
+    model = model_registry.get_model("rcan")
+    model_meta = model_registry.get_metadata("rcan") or {}
+    scale_factor = model_meta.get("scale_factor", 4)
+
+    bicubic_sr, _ = run_bicubic_baseline(lr_crop, scale_factor=scale_factor)
+    views = {
+        "lr": generate_multi_spectral_views(lr_crop).get("rgb", ""),
+        "bicubic": generate_multi_spectral_views(bicubic_sr).get("rgb", ""),
+    }
+
+    if model is not None:
+        sr_crop, _, _ = run_inference(model, lr_crop, scale_factor, model_registry.device)
+        views["sr"] = generate_multi_spectral_views(sr_crop).get("rgb", "")
+    else:
+        views["sr"] = views["bicubic"]
+
+    if hr_image is not None:
+        hr_crop_size = crop * scale_factor
+        hy0, hx0 = y0 * scale_factor, x0 * scale_factor
+        hr_crop = hr_image[:, hy0:hy0 + hr_crop_size, hx0:hx0 + hr_crop_size]
+        if hr_crop.shape[1] == hr_crop_size and hr_crop.shape[2] == hr_crop_size:
+            views["ground_truth"] = generate_multi_spectral_views(hr_crop).get("rgb", "")
+
+    return JSONResponse(content={
+        "status": "success",
+        "sample_id": sample_id,
+        "crop_size": crop,
+        "model_id": "rcan" if model is not None else "bicubic",
+        "views": views,
+    })
+
+
 @app.post("/api/superresolve")
 async def superresolve(
     file: UploadFile = File(None),
     sample_id: str = Form(None),
     model_id: str = Form("rcan"),
+    quality: str = Form("fast"),
 ):
     """
     Run super-resolution on an uploaded GeoTIFF or pre-loaded sample tile.
     Returns 4x SR result as base64 PNG, multi-spectral views, physical metrics,
     and predicted uncertainty map.
+
+    quality: "fast" (single pass) or "high" (4x flip self-ensemble, ~4x slower,
+    no retraining required -- see run_inference_ensembled).
     """
     if model_id not in ("bicubic", "srcnn", "rcan"):
         raise HTTPException(status_code=400, detail=f"Invalid model_id '{model_id}'. Allowed: bicubic, srcnn, rcan")
+    if quality not in ("fast", "high"):
+        raise HTTPException(status_code=400, detail="Invalid quality. Allowed: fast, high")
 
     file_bytes = await file.read() if file else None
     lr_image, hr_image, geo_metadata = _load_input_data(sample_id, file_bytes)
@@ -433,7 +513,7 @@ async def superresolve(
     model_meta = model_registry.get_metadata(model_id) or {}
     scale_factor = model_meta.get("scale_factor", 4)
 
-    result = _execute_model_sr(model_id, lr_image, hr_image, scale_factor)
+    result = _execute_model_sr(model_id, lr_image, hr_image, scale_factor, quality=quality)
     sr_array = result.pop("_sr_array")
 
     # Generate a unique run_id and cache the run state on disk for GeoTIFF export and pixel inspection
@@ -467,6 +547,7 @@ async def superresolve(
         "status": "success",
         "model_id": model_id,
         "run_id": run_id,
+        "quality": result["quality"],
         "inference_time_s": result["inference_time_s"],
         "input": {
             "shape": list(lr_image.shape),
@@ -869,13 +950,18 @@ async def superresolve_async(
     file: UploadFile = File(None),
     sample_id: str = Form(None),
     model_id: str = Form("rcan"),
+    quality: str = Form("fast"),
 ):
     """
     Submit super-resolution as an asynchronous background task.
     Returns job_id and status checking URL.
+
+    quality: "fast" (single pass) or "high" (4x flip self-ensemble).
     """
     if model_id not in ("bicubic", "srcnn", "rcan"):
         raise HTTPException(status_code=400, detail=f"Invalid model_id '{model_id}'")
+    if quality not in ("fast", "high"):
+        raise HTTPException(status_code=400, detail="Invalid quality. Allowed: fast, high")
 
     file_bytes = await file.read() if file else None
     if not sample_id and not file_bytes:
@@ -883,7 +969,7 @@ async def superresolve_async(
 
     assert job_store is not None
     job_id = job_store.create_job(model_id=model_id)
-    background_tasks.add_task(_async_worker, job_id, sample_id, file_bytes, model_id)
+    background_tasks.add_task(_async_worker, job_id, sample_id, file_bytes, model_id, quality)
 
     return AsyncJobSubmitResponse(
         status="accepted",

@@ -1,4 +1,26 @@
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;500;700&display=swap");
 @import "tailwindcss";
+
+/*
+  BharatSR "Orbital" theme tokens — used by the new landing page (app/page.tsx).
+  Added alongside the existing --accent-* tokens below (which the Mission
+  Console under app/console/ still uses via Tailwind slate/cyan utility
+  classes) rather than replacing them, so the console keeps working
+  unmodified. Migrate console components to these tokens incrementally.
+*/
+:root {
+  --bsr-bg: #090c10;
+  --bsr-bg2: #0d1218;
+  --bsr-panel: #10161d;
+  --bsr-line: #1d2732;
+  --bsr-ink: #e8edf2;
+  --bsr-ink-dim: #8a97a3;
+  --bsr-signal: #ffb454;   /* sharpening / super-resolution */
+  --bsr-phosphor: #28e0c6; /* telemetry / live data */
+  --bsr-indigo: #6c7bff;   /* physics / uncertainty */
+  --font-display: "Space Grotesk", ui-sans-serif, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
 
 :root {
   --bg-primary: #080c14;
@@ -137,4 +159,129 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: #334155;
+}
+
+/* ==========================================================
+   Landing page ("Orbital" theme) — scoped under .bsr-landing
+   so it never leaks into the Mission Console's slate/cyan UI.
+   ========================================================== */
+.bsr-landing {
+  font-family: var(--font-mono);
+  background: var(--bsr-bg);
+  color: var(--bsr-ink);
+}
+.bsr-landing h1,
+.bsr-landing h2,
+.bsr-landing h3 {
+  font-family: var(--font-display);
+}
+.bsr-grain::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.05;
+  background-image: radial-gradient(circle, #fff 1px, transparent 1px);
+  background-size: 3px 3px;
+  z-index: 5;
+}
+.bsr-hero-grid {
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(rgba(108, 123, 255, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(108, 123, 255, 0.08) 1px, transparent 1px);
+  background-size: 38px 38px;
+  mask-image: radial-gradient(ellipse at 50% 20%, #000 40%, transparent 75%);
+}
+.bsr-earth {
+  position: absolute;
+  left: 50%;
+  top: 58%;
+  width: 190px;
+  height: 190px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(circle at 35% 30%, #1c3a3a, #0a1a1c 70%);
+  border: 1px solid rgba(40, 224, 198, 0.35);
+  box-shadow: 0 0 60px rgba(40, 224, 198, 0.12), inset -20px -20px 50px rgba(0, 0, 0, 0.6);
+}
+.bsr-earth::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background-image: repeating-linear-gradient(70deg, rgba(255, 255, 255, 0.05) 0 2px, transparent 2px 14px);
+}
+.bsr-orbit {
+  position: absolute;
+  left: 50%;
+  top: 58%;
+  width: 270px;
+  height: 270px;
+  margin: -135px 0 0 -135px;
+  border: 1px dashed rgba(108, 123, 255, 0.35);
+  border-radius: 50%;
+  animation: bsr-spin 14s linear infinite;
+}
+.bsr-sat {
+  position: absolute;
+  left: 50%;
+  top: -8px;
+  width: 16px;
+  height: 16px;
+  margin-left: -8px;
+  filter: drop-shadow(0 0 6px var(--bsr-signal));
+}
+.bsr-beam {
+  position: absolute;
+  left: 50%;
+  top: 8px;
+  width: 2px;
+  height: 120px;
+  margin-left: -1px;
+  background: linear-gradient(to bottom, rgba(255, 180, 84, 0.9), transparent);
+}
+@keyframes bsr-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.bsr-scan-ring {
+  position: absolute;
+  left: 50%;
+  top: 58%;
+  width: 190px;
+  height: 190px;
+  margin: -95px 0 0 -95px;
+  border-radius: 50%;
+  border: 1px solid var(--bsr-signal);
+  opacity: 0;
+  animation: bsr-ping 3.2s ease-out infinite;
+}
+@keyframes bsr-ping {
+  0% {
+    opacity: 0.55;
+    transform: scale(0.6);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.5);
+  }
+}
+.bsr-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--bsr-phosphor);
+  box-shadow: 0 0 8px var(--bsr-phosphor);
+  animation: bsr-blink 2.4s infinite;
+}
+@keyframes bsr-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
 }

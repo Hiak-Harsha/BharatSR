@@ -147,6 +147,63 @@ def run_inference(
     return sr_image, inference_time, uncertainty_map
 
 
+def _apply_flip(arr: np.ndarray, flip_h: bool, flip_v: bool) -> np.ndarray:
+    """Flip the last two spatial axes of a (H,W) or (C,H,W) array. Self-inverse."""
+    out = arr
+    if flip_v:
+        out = np.flip(out, axis=-2)
+    if flip_h:
+        out = np.flip(out, axis=-1)
+    return np.ascontiguousarray(out)
+
+
+def run_inference_ensembled(
+    model: torch.nn.Module,
+    lr_image: np.ndarray,
+    scale_factor: int = 4,
+    device: torch.device = torch.device("cpu"),
+) -> Tuple[np.ndarray, float, Optional[np.ndarray]]:
+    """
+    Geometric self-ensemble (test-time augmentation), i.e. "quality" mode.
+
+    Runs inference on the identity input plus its horizontal, vertical, and
+    horizontal+vertical flips, undoes each flip on the corresponding output,
+    and averages. This costs ~4x latency and zero retraining, and typically
+    reduces SAM / improves PSNR because the model's errors are not perfectly
+    symmetric under these transforms while the true scene is.
+
+    Uncertainty is averaged in variance (sigma^2) space, not log-variance,
+    since variance -- not log-variance -- is the physically additive quantity
+    across independent estimates of the same pixel.
+    """
+    model.eval()
+    flip_specs = [(False, False), (True, False), (False, True), (True, True)]
+
+    t0 = time.time()
+    sr_accum = None
+    var_accum = None
+    has_unc = False
+
+    for flip_h, flip_v in flip_specs:
+        aug_lr = _apply_flip(lr_image, flip_h, flip_v)
+        sr_i, _, unc_i = run_inference(model, aug_lr, scale_factor, device)
+        sr_i = _apply_flip(sr_i, flip_h, flip_v)  # flips are self-inverse
+        sr_i64 = sr_i.astype(np.float64)
+        sr_accum = sr_i64 if sr_accum is None else sr_accum + sr_i64
+
+        if unc_i is not None:
+            has_unc = True
+            unc_i = _apply_flip(unc_i, flip_h, flip_v)
+            var_i = unc_i.astype(np.float64) ** 2
+            var_accum = var_i if var_accum is None else var_accum + var_i
+
+    n = len(flip_specs)
+    sr_image = (sr_accum / n).astype(np.float32)
+    uncertainty_map = np.sqrt(var_accum / n).astype(np.float32) if has_unc else None
+    inference_time = time.time() - t0
+    return sr_image, inference_time, uncertainty_map
+
+
 def run_bicubic_baseline(
     lr_image: np.ndarray,
     scale_factor: int = 4
@@ -181,14 +238,21 @@ def run_tiled_inference(
     tile_size: int = 64,
     overlap: int = 16,
     device: torch.device = torch.device("cpu"),
+    use_ensemble: bool = False,
 ) -> Tuple[np.ndarray, float, Optional[np.ndarray]]:
     """
     Memory-safe sliding-window super-resolution inference with overlap blending.
     Enables arbitrary large-image processing without RAM exhaustion or edge artifacts.
+
+    use_ensemble=True runs each tile through the geometric self-ensemble
+    (run_inference_ensembled) instead of a single forward pass -- higher
+    fidelity, ~4x slower. This is the "quality" mode surfaced in the API.
     """
+    infer_fn = run_inference_ensembled if use_ensemble else run_inference
+
     c, h, w = lr_image.shape
     if h <= tile_size and w <= tile_size:
-        return run_inference(model, lr_image, scale_factor, device)
+        return infer_fn(model, lr_image, scale_factor, device)
 
     t0 = time.time()
     h_out, w_out = h * scale_factor, w * scale_factor
@@ -209,7 +273,7 @@ def run_tiled_inference(
     for y0 in y_starts:
         for x0 in x_starts:
             tile_lr = lr_image[:, y0:y0 + tile_size, x0:x0 + tile_size]
-            sr_tile, _, unc_tile = run_inference(model, tile_lr, scale_factor, device)
+            sr_tile, _, unc_tile = infer_fn(model, tile_lr, scale_factor, device)
 
             th, tw = sr_tile.shape[1], sr_tile.shape[2]
             win = create_blend_window(th, tw)

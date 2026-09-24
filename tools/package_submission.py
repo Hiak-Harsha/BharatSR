@@ -75,8 +75,8 @@ def should_exclude(rel_path_str: str, profile: str = "standard") -> bool:
     if suffix in EXCLUDE_EXTENSIONS:
         return True
 
-    # Do not include existing or prior submission ZIPs
-    if filename.startswith("BharatSR_SIH26142_Submission") and suffix == ".zip":
+    # Do not include any existing or prior ZIP archives
+    if suffix == ".zip":
         return True
 
     # Profile-specific filtering

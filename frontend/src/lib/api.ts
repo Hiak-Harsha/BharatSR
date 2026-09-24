@@ -114,6 +114,8 @@ export interface SuperResolveResponse {
   status: string;
   model_id: string;
   run_id?: string;
+  /** "fast" (single pass) or "high" (4x flip self-ensemble TTA) — see run_inference_ensembled. */
+  quality?: "fast" | "high";
   inference_time_s: number;
   input: {
     shape: number[];
@@ -285,11 +287,13 @@ export const getSamples = fetchSamples;
 
 export async function superresolveSample(
   sampleId: string,
-  modelId: string = "rcan"
+  modelId: string = "rcan",
+  quality: "fast" | "high" = "fast"
 ): Promise<SuperResolveResponse> {
   const formData = new FormData();
   formData.append("sample_id", sampleId);
   formData.append("model_id", modelId);
+  formData.append("quality", quality);
 
   const res = await fetch(`${API_BASE}/api/superresolve`, {
     method: "POST",
@@ -306,11 +310,13 @@ export async function superresolveSample(
 
 export async function superresolveUpload(
   file: File,
-  modelId: string = "rcan"
+  modelId: string = "rcan",
+  quality: "fast" | "high" = "fast"
 ): Promise<SuperResolveResponse> {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("model_id", modelId);
+  formData.append("quality", quality);
 
   const res = await fetch(`${API_BASE}/api/superresolve`, {
     method: "POST",
@@ -322,6 +328,28 @@ export async function superresolveUpload(
     throw new Error(err.detail || "Super-resolution failed");
   }
 
+  return res.json();
+}
+
+/** Small live-inference crop (LR / Bicubic / BharatSR / Ground Truth) for the landing page. */
+export interface SamplePreviewResponse {
+  status: string;
+  sample_id: string;
+  crop_size: number;
+  model_id: string;
+  views: {
+    lr: string;
+    bicubic: string;
+    sr: string;
+    ground_truth?: string;
+  };
+}
+
+export async function getSamplePreview(sampleId: string, crop: number = 32): Promise<SamplePreviewResponse> {
+  const res = await fetch(`${API_BASE}/api/samples/${encodeURIComponent(sampleId)}/preview?crop=${crop}`, {
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`Failed to fetch preview: ${res.statusText}`);
   return res.json();
 }
 
@@ -349,12 +377,14 @@ export async function compareModels(
 export async function submitAsyncSuperresolve(
   sampleId?: string,
   file?: File,
-  modelId: string = "rcan"
+  modelId: string = "rcan",
+  quality: "fast" | "high" = "fast"
 ): Promise<{ status: string; job_id: string; status_url: string }> {
   const formData = new FormData();
   if (sampleId) formData.append("sample_id", sampleId);
   if (file) formData.append("file", file);
   formData.append("model_id", modelId);
+  formData.append("quality", quality);
 
   const res = await fetch(`${API_BASE}/api/superresolve/async`, {
     method: "POST",
