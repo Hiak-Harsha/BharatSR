@@ -48,7 +48,8 @@ class ModelRegistry:
             return False
 
         try:
-            checkpoint = torch.load(str(path), map_location=self._device, weights_only=False)
+            # Secure model loading: weights_only=True prevents arbitrary code execution via pickled objects
+            checkpoint = torch.load(str(path), map_location=self._device, weights_only=True)
             n_bands = checkpoint.get("n_bands", 4)
             scale_factor = checkpoint.get("scale_factor", 4)
 

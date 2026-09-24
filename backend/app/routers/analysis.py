@@ -17,7 +17,13 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
 from backend.app.config import Settings
-from backend.app.deps import get_settings, get_model_registry, check_rate_limit, check_upload_size
+from backend.app.deps import (
+    get_settings,
+    get_model_registry,
+    check_rate_limit,
+    check_upload_size,
+    read_uploaded_file_capped,
+)
 from backend.app.schemas import (
     SpectralIndicesResponse,
     CropHealthResponse,
@@ -90,7 +96,7 @@ async def compute_indices(
             }
         return {"status": "success", "indices": index_stats}
 
-    file_bytes = await file.read() if file else None
+    file_bytes = await read_uploaded_file_capped(file, settings.max_image_bytes)
     res = await asyncio.to_thread(_sync_calc)
     return JSONResponse(content=res)
 

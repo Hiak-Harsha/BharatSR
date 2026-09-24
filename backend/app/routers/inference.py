@@ -23,6 +23,7 @@ from backend.app.deps import (
     verify_api_key,
     check_rate_limit,
     check_upload_size,
+    read_uploaded_file_capped,
 )
 from backend.app.schemas import (
     SuperResolveResponse,
@@ -169,7 +170,7 @@ async def superresolve(
     if quality not in ("fast", "high"):
         raise HTTPException(status_code=400, detail="Invalid quality. Allowed: fast, high")
 
-    file_bytes = await file.read() if file else None
+    file_bytes = await read_uploaded_file_capped(file, settings.max_image_bytes)
     sample_tiles_dir = Path(settings.sample_tiles_dir)
     lr_image, hr_image, geo_metadata = load_input_data(sample_id, file_bytes, sample_tiles_dir)
 
@@ -218,7 +219,7 @@ async def superresolve_async(
     if quality not in ("fast", "high"):
         raise HTTPException(status_code=400, detail="Invalid quality. Allowed: fast, high")
 
-    file_bytes = await file.read() if file else None
+    file_bytes = await read_uploaded_file_capped(file, settings.max_image_bytes)
     if not sample_id and not file_bytes:
         raise HTTPException(status_code=400, detail="Provide 'file' or 'sample_id'")
 
@@ -391,7 +392,7 @@ async def compare(
     """
     Rigorous multi-model benchmark: Bicubic Baseline vs SRCNN vs RCAN side-by-side.
     """
-    file_bytes = await file.read() if file else None
+    file_bytes = await read_uploaded_file_capped(file, settings.max_image_bytes)
     sample_tiles_dir = Path(settings.sample_tiles_dir)
     lr_image, hr_image, geo_metadata = load_input_data(sample_id, file_bytes, sample_tiles_dir)
     runs_dir = Path(settings.runs_dir)

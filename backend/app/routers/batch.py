@@ -21,6 +21,7 @@ from backend.app.deps import (
     verify_api_key,
     check_rate_limit,
     check_upload_size,
+    read_uploaded_file_capped,
 )
 from backend.app.schemas import BatchSubmitResponse, BatchStatusResponse
 from backend.app.services.job_store import JobStore
@@ -102,7 +103,7 @@ async def batch_superresolve(
             )
 
     for f in uploaded_files:
-        file_bytes = await f.read()
+        file_bytes = await read_uploaded_file_capped(f, settings.max_image_bytes)
         job_id = store.create_job(model_id=model_id)
         job_ids.append(job_id)
         if pool is not None:

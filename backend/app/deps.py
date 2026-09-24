@@ -9,7 +9,7 @@ from collections import defaultdict
 from typing import Optional, Dict, List
 import threading
 
-from fastapi import Depends, Header, Request
+from fastapi import Depends, Header, Request, UploadFile
 
 from backend.app.config import Settings
 from backend.app.services.inference import ModelRegistry, model_registry
@@ -123,3 +123,24 @@ async def check_upload_size(
                 raise PayloadTooLargeError(max_mb)
         except ValueError:
             pass
+
+
+async def read_uploaded_file_capped(file: Optional[UploadFile], max_bytes: int) -> Optional[bytes]:
+    """Reads uploaded file with a strict byte cap to prevent memory exhaustion."""
+    if not file:
+        return None
+    chunk_size = 1024 * 1024
+    total_read = 0
+    chunks = []
+    while True:
+        chunk = await file.read(chunk_size)
+        if not chunk:
+            break
+        total_read += len(chunk)
+        if total_read > max_bytes:
+            max_mb = max_bytes // (1024 * 1024)
+            logger.warning(f"Upload stream capped: {total_read} bytes > {max_bytes} max limit")
+            raise PayloadTooLargeError(max_mb)
+        chunks.append(chunk)
+    return b"".join(chunks)
+
