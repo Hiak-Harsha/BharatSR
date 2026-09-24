@@ -173,11 +173,14 @@ class DownstreamMasksResponse(BaseModel):
 
 
 class CompareResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
     status: str
+    run_id: Optional[str] = None
     input: Dict[str, Any]
     models: Dict[str, Any]
     comparison_table: List[Dict[str, Any]]
     ground_truth: Optional[Dict[str, Any]] = None
+    geospatial_metadata: Optional[Dict[str, Any]] = None
 
 
 class AsyncJobSubmitResponse(BaseModel):
