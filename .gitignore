@@ -28,6 +28,8 @@ yarn-error.log*
 backend/bharatsr.db
 backend/runs/
 *.db
+*.tif
+*.tiff
 
 # Large Training Datasets & Raw Satellite Archives
 data/raw/
