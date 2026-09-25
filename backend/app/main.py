@@ -63,7 +63,7 @@ async def lifespan(app: FastAPI):
 
     # Load pre-trained models from weights directory
     weights_dir = Path(settings.weights_dir)
-    for model_name in ["srcnn", "rcan"]:
+    for model_name in ["srcnn", "rcan", "swinir", "hat"]:
         ckpt_path = weights_dir / f"{model_name}_best.pth"
         if ckpt_path.exists():
             success = model_registry.load_model(model_name, str(ckpt_path))

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { getSamples, getSamplePreview, SampleTile, SamplePreviewResponse } from "@/lib/api";
+import { PixelResolveCanvas } from "@/components/effects/PixelResolveCanvas";
 
 const METRICS = [
   { n: "2.94°", l: "Spectral Angle (real S2) · target <5°" },
@@ -108,11 +109,49 @@ export default function LandingPage() {
         </div>
       </header>
 
-      {/* PROBLEM — live inference strip */}
+      {/* PROBLEM — live inference strip with interactive optical resolve canvas */}
       <section id="problem" className="py-14 px-6">
         <div className="max-w-[1100px] mx-auto">
-          <div className="text-[11px] tracking-[.14em] uppercase" style={{ color: "var(--bsr-indigo)" }}>01 · The Gap</div>
-          <h2 className="text-2xl my-2 mb-7">Same tile, four ways of seeing it</h2>
+          <div className="text-[11px] tracking-[.14em] uppercase" style={{ color: "var(--bsr-indigo)" }}>01 · Optical Resolution & The Gap</div>
+          <h2 className="text-2xl my-2 mb-6">Interactive Sensor Focus: 10m &rarr; 2.5m Super-Resolution</h2>
+
+          {/* Interactive Optical Pixel Resolve Canvas */}
+          <div className="flex flex-col lg:flex-row items-center gap-6 mb-8 p-5 rounded-xl border border-zinc-800 bg-zinc-950/80 backdrop-blur-md shadow-2xl">
+            <div className="w-full lg:w-1/2 aspect-square max-w-[440px] shrink-0">
+              <PixelResolveCanvas
+                src={preview?.views.sr || "/satellite_demo.png"}
+                alt="Interactive Optical Resolving Lens"
+                className="w-full h-full shadow-2xl"
+                overlayLabel="Hover cursor / drag touch to focus 10m sensor pixels into 2.5m analytical clarity"
+              />
+            </div>
+            <div className="w-full lg:w-1/2 flex flex-col justify-center gap-3">
+              <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs font-mono w-fit">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                Live Optical Sensor Demonstration
+              </div>
+              <h3 className="text-lg sm:text-xl font-bold font-mono tracking-tight text-zinc-100">
+                Sharpen Raw Sentinel-2 Imagery by Moving Across the Tile
+              </h3>
+              <p className="text-xs text-zinc-400 leading-relaxed font-sans">
+                At 10m Ground Sampling Distance (GSD), small agricultural parcels, canal paths, and urban peripheries merge into indistinct pixel blocks. As your cursor moves across the sensor grid, BharatSR&apos;s physical super-resolution reconstructs high-frequency spatial boundaries while preserving exact Bottom-of-Atmosphere (BOA) surface reflectance.
+              </p>
+              <div className="grid grid-cols-2 gap-2.5 pt-2 text-xs font-mono">
+                <div className="p-2.5 rounded-lg bg-zinc-900/80 border border-zinc-800">
+                  <div className="text-[10px] text-zinc-500">RAW RESOLUTION</div>
+                  <div className="text-amber-400 font-semibold mt-0.5">10.0m Native S2</div>
+                </div>
+                <div className="p-2.5 rounded-lg bg-zinc-900/80 border border-zinc-800">
+                  <div className="text-[10px] text-zinc-500">RESOLVED GRID</div>
+                  <div className="text-cyan-400 font-semibold mt-0.5">2.5m Analysis Equivalent</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="text-xs font-mono uppercase tracking-wider text-zinc-400 mb-3">
+            Comparative Benchmark Products (Same Tile, Four Perspectives)
+          </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
             {panels.map((p) => (
               <div key={p.tag} className="rounded-[10px] overflow-hidden border" style={{ background: "var(--bsr-panel)", borderColor: "var(--bsr-line)" }}>

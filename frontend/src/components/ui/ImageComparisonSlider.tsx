@@ -82,7 +82,7 @@ export function ImageComparisonSlider({
   const [sliderPos, setSliderPos] = useState<number>(50);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [layoutMode, setLayoutMode] = useState<"slider" | "side-by-side" | "quad">("slider");
-  const [activeBand, setActiveBand] = useState<BandViewMode>("rgb");
+  const [activeBand, setActiveBand] = useState<BandViewMode>("composite");
 
   const containerRef = useRef<HTMLDivElement>(null);
 

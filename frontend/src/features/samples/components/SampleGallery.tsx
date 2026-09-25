@@ -93,7 +93,7 @@ export function SampleGallery({ className }: { className?: string }) {
                 {/* Thumbnail */}
                 <div className="aspect-square w-full bg-black relative overflow-hidden">
                   <img
-                    src={sample.thumbnail}
+                    src={sample.views?.composite || sample.thumbnail}
                     alt={sample.title || sample.id}
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                   />

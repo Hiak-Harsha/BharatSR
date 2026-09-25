@@ -315,7 +315,109 @@ def generate_multi_spectral_views(img: np.ndarray) -> dict:
         views["red"] = views.get("b4", views.get("band_2"))
         views["nir"] = views.get("b8", views.get("band_3"))
 
+    # Standalone All-Bands Master Composite (Analytical Product Grid)
+    views["composite"] = generate_master_composite(img, views)
+
     return views
+
+
+def generate_master_composite(bands: np.ndarray, views: Optional[dict] = None) -> str:
+    """
+    Produces ONE PNG that is the actual analytical product, built as a labeled
+    2x4 grid:
+    - Row 1: True Color RGB (large, primary panel spanning 2 columns) +
+             Color Infrared CIR +
+             NDVI with dedicated analytical colorbar.
+    - Row 2: Annotated individual spectral sub-panels (B2 Blue 490nm, B3 Green 560nm,
+             B4 Red 665nm, B8 NIR 842nm).
+    Returns a single base64 PNG, same encoding convention as the other views.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.gridspec import GridSpec
+
+    c, h, w = bands.shape
+
+    fig = plt.figure(figsize=(14, 7.5), facecolor="#09090b", edgecolor="#27272a")
+    gs = GridSpec(2, 4, figure=fig, height_ratios=[1.25, 1.0], hspace=0.28, wspace=0.18)
+
+    title_color = "#e4e4e7"
+    subtitle_color = "#a1a1aa"
+    amber_accent = "#f59e0b"
+    cyan_accent = "#06b6d4"
+
+    fig.suptitle(
+        "BHARATSR MULTI-SPECTRAL MASTER COMPOSITE | SENTINEL-2 MSI (10m -> 2.5m GRID)",
+        fontsize=12,
+        fontweight="bold",
+        color=title_color,
+        y=0.98,
+        fontfamily="monospace",
+    )
+
+    if c >= 4:
+        b2 = np.clip(bands[BAND_INDEX["B2"]], 0.0, 1.0)
+        b3 = np.clip(bands[BAND_INDEX["B3"]], 0.0, 1.0)
+        b4 = np.clip(bands[BAND_INDEX["B4"]], 0.0, 1.0)
+        b8 = np.clip(bands[BAND_INDEX["B8"]], 0.0, 1.0)
+
+        # 1. Primary: True Color RGB (span cols 0 and 1)
+        ax_rgb = fig.add_subplot(gs[0, 0:2])
+        rgb = np.stack([b4, b3, b2], axis=-1)
+        ax_rgb.imshow(rgb)
+        ax_rgb.set_title("PRIMARY PRODUCT: TRUE COLOR RGB (B4 - B3 - B2)", color=amber_accent, fontsize=10, fontweight="bold", fontfamily="monospace", pad=6)
+        ax_rgb.axis("off")
+
+        # 2. CIR (col 2)
+        ax_cir = fig.add_subplot(gs[0, 2])
+        cir = np.stack([b8, b4, b3], axis=-1)
+        ax_cir.imshow(cir)
+        ax_cir.set_title("CIR FALSE COLOR (B8-B4-B3)", color=title_color, fontsize=9, fontweight="bold", fontfamily="monospace", pad=6)
+        ax_cir.axis("off")
+
+        # 3. NDVI (col 3) with colorbar
+        ax_ndvi = fig.add_subplot(gs[0, 3])
+        denom = b8 + b4 + 1e-7
+        ndvi = (b8 - b4) / denom
+        ndvi_norm = np.clip((ndvi + 0.2) / 1.05, 0.0, 1.0)
+        im_ndvi = ax_ndvi.imshow(ndvi_norm, cmap="RdYlGn", vmin=0.0, vmax=1.0)
+        ax_ndvi.set_title("NDVI VEGETATION INDEX", color=cyan_accent, fontsize=9, fontweight="bold", fontfamily="monospace", pad=6)
+        ax_ndvi.axis("off")
+
+        cbar = fig.colorbar(im_ndvi, ax=ax_ndvi, orientation="vertical", fraction=0.046, pad=0.04)
+        cbar.set_ticks([0.0, 0.2, 0.5, 0.8, 1.0])
+        cbar.set_ticklabels(["-0.2", "0.0", "0.3", "0.6", "0.85"])
+        cbar.ax.tick_params(labelsize=7, colors=subtitle_color)
+        cbar.outline.set_edgecolor("#3f3f46")
+
+        # Row 2: Sub-panels for individual bands
+        sub_panels = [
+            (gs[1, 0], b2, "B2: BLUE (490 nm)", "bone"),
+            (gs[1, 1], b3, "B3: GREEN (560 nm)", "bone"),
+            (gs[1, 2], b4, "B4: RED (665 nm)", "bone"),
+            (gs[1, 3], b8, "B8: NIR (842 nm)", "bone"),
+        ]
+
+        for grid_pos, band_data, label, cmap_name in sub_panels:
+            ax = fig.add_subplot(grid_pos)
+            ax.imshow(band_data, cmap=cmap_name, vmin=0.0, vmax=1.0)
+            ax.set_title(label, color=subtitle_color, fontsize=8, fontfamily="monospace", pad=4)
+            ax.axis("off")
+
+    else:
+        ax = fig.add_subplot(gs[:, :])
+        if c == 3:
+            ax.imshow(np.clip(bands.transpose(1, 2, 0), 0.0, 1.0))
+        else:
+            ax.imshow(np.clip(bands[0], 0.0, 1.0), cmap="bone")
+        ax.set_title("MULTI-SPECTRAL PREVIEW", color=title_color, fontsize=10, fontfamily="monospace")
+        ax.axis("off")
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight", facecolor=fig.get_facecolor(), dpi=110)
+    plt.close(fig)
+    return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
 def export_geotiff_bytes(img: np.ndarray, geo_metadata: dict = None, scale_factor: int = 4) -> bytes:

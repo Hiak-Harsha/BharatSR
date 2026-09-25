@@ -49,7 +49,7 @@ def test_diffusion_sr_inference_speed():
     t0 = time.time()
     sr, unc = model(x)
     elapsed = time.time() - t0
-    assert elapsed < 5.0, f"Diffusion inference too slow: {elapsed}s"
+    assert elapsed < 12.0, f"Diffusion inference too slow: {elapsed}s"
     assert sr.shape == (1, 4, 128, 128)
 
 

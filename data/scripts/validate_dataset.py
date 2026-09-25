@@ -83,12 +83,18 @@ def validate_dataset(
     ref_mean = float(np.mean(lr_patches))
     ref_std = float(np.std(lr_patches))
 
-    # 3. Invalid pixels (NaN / Inf / Negative)
+    # 3. Invalid pixels (NaN / Inf / Negative) and Radiometric Outlier Screening
     nan_count = int(np.isnan(lr_patches).sum() + np.isnan(hr_patches).sum())
     inf_count = int(np.isinf(lr_patches).sum() + np.isinf(hr_patches).sum())
     negative_count = int((lr_patches < -1e-4).sum())
     total_pixels = float(lr_patches.size)
     invalid_pct = round(((nan_count + inf_count + negative_count) / total_pixels) * 100.0, 4)
+
+    # Radiometric outlier screening: physical BOA range [-0.05, 1.5]
+    outlier_count = int((lr_patches < -0.05).sum() + (lr_patches > 1.5).sum() +
+                        (hr_patches < -0.05).sum() + (hr_patches > 1.5).sum())
+    outlier_pct = round((outlier_count / (total_pixels * 2)) * 100.0, 4)
+    is_radiometrically_bounded = bool(outlier_count == 0)
 
     # 4. Nodata percentage (0 across all bands)
     nodata_pixels = int(np.all(lr_patches == 0, axis=1).sum())
@@ -133,7 +139,7 @@ def validate_dataset(
             pass
 
     is_spatially_aligned = bool(mean_spatial_alignment_err < 0.05)
-    is_valid = bool(invalid_pct == 0.0 and is_spatially_aligned)
+    is_valid = bool(invalid_pct == 0.0 and is_spatially_aligned and is_radiometrically_bounded)
 
     report = {
         "valid": is_valid,
@@ -151,6 +157,7 @@ def validate_dataset(
         "reflectance_mean": round(ref_mean, 4),
         "reflectance_std": round(ref_std, 4),
         "invalid_pixel_pct": invalid_pct,
+        "radiometric_outlier_pct": outlier_pct,
         "nodata_pct": nodata_pct,
         "cloud_pct": cloud_pct,
         "spatial_alignment_error_mae": mean_spatial_alignment_err,

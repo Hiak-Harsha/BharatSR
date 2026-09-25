@@ -1,31 +1,7 @@
 scene_id,lr_product,hr_product,region,date,gsd,cloud_fraction,registration_rmse
-scene_15,SYNTH_S2_SCENE_015,SYNTH_HR_REF_015,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_16,SYNTH_S2_SCENE_016,SYNTH_HR_REF_016,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_30,SYNTH_S2_SCENE_030,SYNTH_HR_REF_030,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_45,SYNTH_S2_SCENE_045,SYNTH_HR_REF_045,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_56,SYNTH_S2_SCENE_056,SYNTH_HR_REF_056,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_60,SYNTH_S2_SCENE_060,SYNTH_HR_REF_060,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_65,SYNTH_S2_SCENE_065,SYNTH_HR_REF_065,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_66,SYNTH_S2_SCENE_066,SYNTH_HR_REF_066,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_67,SYNTH_S2_SCENE_067,SYNTH_HR_REF_067,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_68,SYNTH_S2_SCENE_068,SYNTH_HR_REF_068,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_69,SYNTH_S2_SCENE_069,SYNTH_HR_REF_069,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_78,SYNTH_S2_SCENE_078,SYNTH_HR_REF_078,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_82,SYNTH_S2_SCENE_082,SYNTH_HR_REF_082,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_84,SYNTH_S2_SCENE_084,SYNTH_HR_REF_084,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_93,SYNTH_S2_SCENE_093,SYNTH_HR_REF_093,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_95,SYNTH_S2_SCENE_095,SYNTH_HR_REF_095,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_115,SYNTH_S2_SCENE_115,SYNTH_HR_REF_115,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_124,SYNTH_S2_SCENE_124,SYNTH_HR_REF_124,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_125,SYNTH_S2_SCENE_125,SYNTH_HR_REF_125,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_128,SYNTH_S2_SCENE_128,SYNTH_HR_REF_128,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_132,SYNTH_S2_SCENE_132,SYNTH_HR_REF_132,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_148,SYNTH_S2_SCENE_148,SYNTH_HR_REF_148,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_152,SYNTH_S2_SCENE_152,SYNTH_HR_REF_152,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_158,SYNTH_S2_SCENE_158,SYNTH_HR_REF_158,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_165,SYNTH_S2_SCENE_165,SYNTH_HR_REF_165,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_170,SYNTH_S2_SCENE_170,SYNTH_HR_REF_170,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_174,SYNTH_S2_SCENE_174,SYNTH_HR_REF_174,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_177,SYNTH_S2_SCENE_177,SYNTH_HR_REF_177,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_182,SYNTH_S2_SCENE_182,SYNTH_HR_REF_182,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
-scene_186,SYNTH_S2_SCENE_186,SYNTH_HR_REF_186,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
+scene_cdse_odisha_chilika_lagoon,S2_L2A_scene_cdse_odisha_chilika_lagoon,HR_REF_scene_cdse_odisha_chilika_lagoon,Chilika Coastal Wetland Lagoon (Eastern Coastal),2024-11-10,10.0m,0.0,0.0
+scene_cdse_rajasthan_jodhpur_margin,S2_L2A_scene_cdse_rajasthan_jodhpur_margin,HR_REF_scene_cdse_rajasthan_jodhpur_margin,Thar Desert Margin / Arid Scrub (Jodhpur) (Thar Desert),2024-01-15,10.0m,0.0,0.0
+scene_0,SYNTH_S2_SCENE_000,SYNTH_HR_REF_000,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
+scene_4,SYNTH_S2_SCENE_004,SYNTH_HR_REF_004,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
+scene_6,SYNTH_S2_SCENE_006,SYNTH_HR_REF_006,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0
+scene_8,SYNTH_S2_SCENE_008,SYNTH_HR_REF_008,Synthetic Calibration Pattern,2024-03-15,10.0m,0.01,0.0

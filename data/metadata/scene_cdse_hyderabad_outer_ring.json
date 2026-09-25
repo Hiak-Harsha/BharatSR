@@ -1,0 +1,27 @@
+{
+  "scene_id": "scene_cdse_hyderabad_outer_ring",
+  "is_synthetic": false,
+  "source_dataset": "Copernicus Data Space Ecosystem (Sentinel-2 L2A)",
+  "attribution": "Copernicus Sentinel data 2024",
+  "sensor": "Sentinel-2 MSI (B2, B3, B4, B8)",
+  "scale_factor": 4,
+  "lr_shape": [
+    4,
+    64,
+    64
+  ],
+  "hr_shape": [
+    4,
+    256,
+    256
+  ],
+  "reflectance_range": [
+    0.009999999776482582,
+    0.37575921416282654
+  ],
+  "registration_rmse": 0.0,
+  "cloud_fraction": 0.0,
+  "crs": "EPSG:32644",
+  "region": "Hyderabad Outer Ring Road (ORR) Fringe (Deccan Plateau)",
+  "date": "2024-11-01"
+}

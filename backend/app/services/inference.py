@@ -211,16 +211,15 @@ def run_inference(
         if isinstance(model, SRCNN):
             lr_up = F.interpolate(lr_tensor, scale_factor=scale_factor, mode="bicubic", align_corners=False)
             sr_tensor = model(lr_up)
-        elif isinstance(model, RCAN):
+        else:
             res = model(lr_tensor)
             if isinstance(res, tuple):
                 sr_tensor, log_var = res
-                logvar_np = log_var.squeeze(0).squeeze(0).cpu().numpy()
-                uncertainty_map = logvar_to_std(logvar_np)
+                if log_var is not None:
+                    logvar_np = log_var.squeeze(0).squeeze(0).cpu().numpy()
+                    uncertainty_map = logvar_to_std(logvar_np)
             else:
                 sr_tensor = res
-        else:
-            sr_tensor = model(lr_tensor)
 
     inference_time = time.time() - t0
     sr_image = sr_tensor.squeeze(0).cpu().numpy()

@@ -2,6 +2,7 @@
   "scene_id": "scene_0",
   "is_synthetic": true,
   "source_dataset": "Procedural Synthetic Pattern",
+  "attribution": "BharatSR Procedural Pattern Generator",
   "sensor": "Sentinel-2 MSI 10m bands (B2, B3, B4, B8) simulation",
   "scale_factor": 4,
   "lr_shape": [
@@ -18,5 +19,9 @@
     0.025545096024870872,
     0.815220296382904
   ],
-  "registration_rmse": 0.0
+  "registration_rmse": 0.0,
+  "cloud_fraction": 0.01,
+  "crs": null,
+  "region": "Synthetic Calibration Pattern",
+  "date": "2024-03-15"
 }

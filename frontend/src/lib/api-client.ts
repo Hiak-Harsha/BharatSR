@@ -33,6 +33,7 @@ export type ModelReloadResponse = components["schemas"]["ModelReloadResponse"];
 export type AsyncJobSubmitResponse = components["schemas"]["AsyncJobSubmitResponse"];
 
 export interface MultiSpectralViews {
+  composite?: string;
   rgb?: string;
   cir?: string;
   ndvi?: string;

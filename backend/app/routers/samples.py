@@ -79,7 +79,7 @@ def _load_samples_sync(sample_dir_path: str) -> List[SampleInfo]:
                 has_geo=has_geo,
                 crs=crs,
                 sensor=sensor,
-                thumbnail=views.get("rgb", ""),
+                thumbnail=views.get("composite", views.get("rgb", "")),
                 views=views,
             ))
         except Exception as e:

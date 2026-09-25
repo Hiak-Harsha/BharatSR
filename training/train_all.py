@@ -45,6 +45,16 @@ def run_all_training(epochs: int = 5, batch_size: int = 4, quick_test: bool = Fa
     print("BharatSR Unified Multi-Model Training Runner")
     print("=" * 60)
 
+    # Hard CI Scientific Validation Gate before training
+    from data.scripts.validate_dataset import validate_dataset
+    val_report = validate_dataset(PROJECT_ROOT / "data" / "processed" / "val.npz", verbose=True)
+    if not val_report.get("valid", False):
+        raise RuntimeError(
+            f"Pre-training CI validation gate FAILED: {val_report.get('error', 'Integrity check failed')}. "
+            "Training refused. Inspect data/visualizations/qa/ reports."
+        )
+    print("[PASS] Pre-training validation gate verified (0 NaN/Inf, strict physical bounds, canonical alignment).\n")
+
     # 1. SwinIR
     from training.train_swinir import train_swinir
     print("\n--- Training SwinIR-SR ---")

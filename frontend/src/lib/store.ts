@@ -12,6 +12,7 @@ export type ConsoleViewMode =
   | "export";
 
 export type BandViewMode =
+  | "composite"
   | "rgb"
   | "cir"
   | "ndvi"
@@ -48,7 +49,7 @@ export const useConsoleStore = create<ConsoleUIState>((set) => ({
   selectedSample: "sample_1",
   customFile: null,
   activeView: "single",
-  activeBandView: "rgb",
+  activeBandView: "composite",
   comparisonSliderPos: 50,
   currentRunId: null,
   currentQuality: "fast",
