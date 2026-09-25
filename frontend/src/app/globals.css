@@ -298,3 +298,36 @@ body {
     opacity: 0.25;
   }
 }
+
+/* Responsive orbit sizing for small viewports */
+@media (max-width: 639px) {
+  .bsr-earth {
+    width: clamp(100px, 28vw, 160px);
+    height: clamp(100px, 28vw, 160px);
+  }
+  .bsr-orbit {
+    width: clamp(160px, 42vw, 230px);
+    height: clamp(160px, 42vw, 230px);
+    margin: calc(-1 * clamp(80px, 21vw, 115px)) 0 0 calc(-1 * clamp(80px, 21vw, 115px));
+  }
+  .bsr-scan-ring {
+    width: clamp(100px, 28vw, 160px);
+    height: clamp(100px, 28vw, 160px);
+    margin: calc(-1 * clamp(50px, 14vw, 80px)) 0 0 calc(-1 * clamp(50px, 14vw, 80px));
+  }
+}
+
+/* Reduced motion: freeze orbit and scan animations */
+@media (prefers-reduced-motion: reduce) {
+  .bsr-orbit {
+    animation-play-state: paused !important;
+  }
+  .bsr-scan-ring {
+    animation-play-state: paused !important;
+    opacity: 0.3 !important;
+  }
+  .bsr-dot {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+}

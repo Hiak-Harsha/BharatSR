@@ -9,18 +9,19 @@ import { cn } from "@/lib/utils";
 
 export function ChangeDetectionPanel({ className }: { className?: string }) {
   const currentRunId = useConsoleStore((s) => s.currentRunId);
+  const currentSession = useConsoleStore((s) => s.currentSession);
   const { data: samples } = useSamples();
 
-  const [runIdT1, setRunIdT1] = useState<string>("sample_1");
-  const [runIdT2, setRunIdT2] = useState<string>("sample_2");
+  const [t1Key, setT1Key] = useState<string>("sample_real_s2");
+  const [t2Key, setT2Key] = useState<string>("sample_1");
   const [method, setMethod] = useState<string>("ndvi_diff");
 
   // Automatically update T2 if a fresh run is executed in console
   useEffect(() => {
-    if (currentRunId && currentRunId !== runIdT1) {
-      setRunIdT2(currentRunId);
+    if (currentRunId) {
+      setT2Key(currentRunId);
     }
-  }, [currentRunId, runIdT1]);
+  }, [currentRunId]);
 
   const {
     mutate: runChangeDetect,
@@ -31,42 +32,81 @@ export function ChangeDetectionPanel({ className }: { className?: string }) {
 
   const handleDetect = () => {
     runChangeDetect({
-      runIdT1,
-      runIdT2,
+      runIdT1: t1Key,
+      runIdT2: t2Key,
       method,
     });
   };
+
+  const getOptionMetadata = (key: string) => {
+    if (key === currentRunId) {
+      return {
+        title: "Active Console Run",
+        date: currentSession?.createdAt ? new Date(currentSession.createdAt).toLocaleDateString() : "Current Session",
+        sensor: "Sentinel-2 L2A (Processed)",
+        model: currentSession?.modelId?.toUpperCase() || "RCAN",
+        status: "Active Run",
+        isDemo: false,
+      };
+    }
+    const sample = samples?.find((s) => s.sample_id === key);
+    if (sample) {
+      return {
+        title: sample.title,
+        date: sample.acquisition_date || "Demo scene — generated inference",
+        sensor: sample.sensor || "Sentinel-2 MSI",
+        model: "Original / 4x SR",
+        status: sample.is_independent_hr ? "Independent Observation" : "Demonstration Scene",
+        isDemo: !sample.acquisition_date,
+      };
+    }
+    return {
+      title: key,
+      date: "External Artifact",
+      sensor: "Custom Raster",
+      model: "Unknown",
+      status: "Custom",
+      isDemo: true,
+    };
+  };
+
+  const metaT1 = getOptionMetadata(t1Key);
+  const metaT2 = getOptionMetadata(t2Key);
+
+  // Check compatibility
+  const isSameTarget = t1Key === t2Key;
+  const isCompatible = !isSameTarget;
 
   const stats = (changeData?.statistics || {}) as Record<string, any>;
 
   return (
     <div className={cn("flex flex-col gap-6", className)}>
-      <div className="flex flex-wrap items-center justify-between gap-4 p-4 rounded-xl border border-zinc-800 bg-zinc-950">
+      <div className="flex flex-wrap items-center justify-between gap-4 p-5 rounded-xl border border-zinc-800 bg-zinc-950">
         <div>
           <h2 className="font-mono text-base font-bold text-zinc-100 flex items-center gap-2">
             <History className="w-5 h-5 text-amber-400" />
             Bi-Temporal Satellite Change Detection
           </h2>
           <p className="mt-1 font-mono text-xs text-zinc-400">
-            Compare earlier (T1) vs later (T2) acquisitions to detect land-cover transition or vegetation loss
+            Compare earlier (TIME 1) vs later (TIME 2) acquisitions to quantify vegetation delta and radiometric shift.
           </p>
         </div>
 
         <button
           type="button"
-          disabled={isDetecting || !runIdT1 || !runIdT2}
+          disabled={isDetecting || !isCompatible}
           onClick={handleDetect}
           className={cn(
             "inline-flex items-center gap-2 px-6 py-2.5 rounded-lg font-mono text-xs font-bold tracking-wider uppercase transition shadow-lg",
-            isDetecting
-              ? "bg-amber-500/50 text-zinc-950 cursor-not-allowed"
+            isDetecting || !isCompatible
+              ? "bg-zinc-800 text-zinc-500 cursor-not-allowed"
               : "bg-amber-500 hover:bg-amber-400 text-zinc-950 shadow-[0_0_20px_rgba(245,158,11,0.3)] active:scale-95"
           )}
         >
           {isDetecting ? (
             <>
               <Activity className="w-4 h-4 animate-spin" />
-              Computing Bi-Temporal Differential...
+              Computing Radiometric Divergence...
             </>
           ) : (
             <>
@@ -77,80 +117,104 @@ export function ChangeDetectionPanel({ className }: { className?: string }) {
         </button>
       </div>
 
-      {/* Target Runs Selector */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-4 rounded-xl border border-zinc-800 bg-zinc-950 font-mono text-xs">
-        <div>
-          <label className="text-zinc-500 block text-[11px] uppercase mb-1">
-            Reference Epoch (T1 - Earlier)
-          </label>
-          <select
-            value={runIdT1}
-            onChange={(e) => setRunIdT1(e.target.value)}
-            className="w-full bg-zinc-900 border border-zinc-800 px-3 py-2 rounded-lg text-zinc-200 focus:border-amber-500 focus:outline-none cursor-pointer"
-          >
-            {samples?.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.title} ({s.id})
-              </option>
-            ))}
-            {currentRunId && (
-              <option value={currentRunId}>Active Run ({currentRunId})</option>
-            )}
-            <option value="custom">Custom ID / Manual Entry</option>
-          </select>
-          {runIdT1 === "custom" && (
-            <input
-              type="text"
-              onChange={(e) => setRunIdT1(e.target.value)}
-              placeholder="Enter run_id or sample_id"
-              className="mt-2 w-full bg-zinc-900 border border-zinc-800 px-3 py-1.5 rounded text-zinc-200 text-xs focus:border-amber-500 focus:outline-none"
-            />
-          )}
+      {/* Target Runs Selector: TIME 1 vs TIME 2 */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* TIME 1 CARD */}
+        <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-950 font-mono space-y-3">
+          <div className="flex items-center justify-between border-b border-zinc-850 pb-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-amber-400">
+              TIME 1 (Earlier Epoch)
+            </span>
+            <span className="text-xs text-zinc-400">{metaT1.status}</span>
+          </div>
+
+          <div>
+            <label className="text-zinc-400 block text-xs mb-1.5">
+              Select Scene / Saved Run
+            </label>
+            <select
+              value={t1Key}
+              onChange={(e) => setT1Key(e.target.value)}
+              className="w-full bg-zinc-900 border border-zinc-800 px-3 py-2.5 rounded-lg text-zinc-100 text-xs focus:border-amber-500 focus:outline-none cursor-pointer"
+            >
+              {(samples as any[])?.map((s: any) => (
+                <option key={s.sample_id} value={s.sample_id}>
+                  {s.title} ({s.sensor})
+                </option>
+              ))}
+              {currentRunId && (
+                <option value={currentRunId}>Active Console Run ({currentRunId.slice(0, 10)}...)</option>
+              )}
+            </select>
+          </div>
+
+          <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3 text-xs space-y-1 text-zinc-300">
+            <div><span className="text-zinc-400">Scene:</span> <span className="font-semibold">{metaT1.title}</span></div>
+            <div><span className="text-zinc-400">Date:</span> {metaT1.date}</div>
+            <div><span className="text-zinc-400">Sensor:</span> {metaT1.sensor}</div>
+          </div>
         </div>
 
-        <div>
-          <label className="text-zinc-500 block text-[11px] uppercase mb-1">
-            Target Epoch (T2 - Later)
-          </label>
-          <select
-            value={runIdT2}
-            onChange={(e) => setRunIdT2(e.target.value)}
-            className="w-full bg-zinc-900 border border-zinc-800 px-3 py-2 rounded-lg text-zinc-200 focus:border-amber-500 focus:outline-none cursor-pointer"
-          >
-            {currentRunId && (
-              <option value={currentRunId}>Active Run ({currentRunId})</option>
-            )}
-            {samples?.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.title} ({s.id})
-              </option>
-            ))}
-            <option value="custom">Custom ID / Manual Entry</option>
-          </select>
-          {runIdT2 === "custom" && (
-            <input
-              type="text"
-              onChange={(e) => setRunIdT2(e.target.value)}
-              placeholder="Enter run_id or sample_id"
-              className="mt-2 w-full bg-zinc-900 border border-zinc-800 px-3 py-1.5 rounded text-zinc-200 text-xs focus:border-amber-500 focus:outline-none"
-            />
-          )}
-        </div>
+        {/* TIME 2 CARD */}
+        <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-950 font-mono space-y-3">
+          <div className="flex items-center justify-between border-b border-zinc-850 pb-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-cyan-400">
+              TIME 2 (Later Epoch)
+            </span>
+            <span className="text-xs text-zinc-400">{metaT2.status}</span>
+          </div>
 
-        <div>
-          <label className="text-zinc-500 block text-[11px] uppercase mb-1">
+          <div>
+            <label className="text-zinc-400 block text-xs mb-1.5">
+              Select Scene / Saved Run
+            </label>
+            <select
+              value={t2Key}
+              onChange={(e) => setT2Key(e.target.value)}
+              className="w-full bg-zinc-900 border border-zinc-800 px-3 py-2.5 rounded-lg text-zinc-100 text-xs focus:border-amber-500 focus:outline-none cursor-pointer"
+            >
+              {currentRunId && (
+                <option value={currentRunId}>Active Console Run ({currentRunId.slice(0, 10)}...)</option>
+              )}
+              {(samples as any[])?.map((s: any) => (
+                <option key={s.sample_id} value={s.sample_id}>
+                  {s.title} ({s.sensor})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="rounded-lg bg-zinc-900/80 border border-zinc-800 p-3 text-xs space-y-1 text-zinc-300">
+            <div><span className="text-zinc-400">Scene:</span> <span className="font-semibold">{metaT2.title}</span></div>
+            <div><span className="text-zinc-400">Date:</span> {metaT2.date}</div>
+            <div><span className="text-zinc-400">Sensor:</span> {metaT2.sensor}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Operator and Compatibility Strip */}
+      <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-950 font-mono flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="flex-1">
+          <label className="text-zinc-400 block text-xs uppercase mb-1">
             Differential Operator
           </label>
           <select
             value={method}
             onChange={(e) => setMethod(e.target.value)}
-            className="w-full bg-zinc-900 border border-zinc-800 px-3 py-2 rounded-lg text-amber-300 focus:border-amber-500 focus:outline-none cursor-pointer"
+            className="w-full sm:w-80 bg-zinc-900 border border-zinc-800 px-3 py-2 rounded-lg text-amber-300 text-xs focus:border-amber-500 focus:outline-none cursor-pointer"
           >
             <option value="ndvi_diff">Normalized Difference Vegetation Index (NDVI)</option>
             <option value="spectral_diff">Multi-Spectral Euclidean Magnitude</option>
             <option value="magnitude">Ratio of Absolute Radiance Change</option>
           </select>
         </div>
+
+        {isSameTarget && (
+          <div className="rounded-lg bg-amber-950/20 border border-amber-800/40 p-2.5 text-xs text-amber-300 flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" />
+            <span>Select two distinct scenes or runs to evaluate temporal change.</span>
+          </div>
+        )}
       </div>
 
       {changeError && (
@@ -217,60 +281,60 @@ export function ChangeDetectionPanel({ className }: { className?: string }) {
           {/* Statistics Strip */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div className="p-3 rounded-lg border border-zinc-800 bg-zinc-950 font-mono">
-              <span className="text-zinc-500 text-[10px] block uppercase">Significant Change</span>
-              <span className="text-amber-400 font-bold text-base">
+              <span className="text-zinc-400 text-xs block uppercase">Significant Change</span>
+              <span className="text-amber-400 font-bold text-lg">
                 {stats.significant_change_pct != null
                   ? `${stats.significant_change_pct.toFixed(2)}%`
                   : "N/A"}
               </span>
-              <span className="text-[10px] text-zinc-500 block mt-0.5">Thresholded Area</span>
+              <span className="text-xs text-zinc-500 block mt-0.5">Thresholded Area</span>
             </div>
 
             <div className="p-3 rounded-lg border border-zinc-800 bg-zinc-950 font-mono">
-              <span className="text-zinc-500 text-[10px] block uppercase">NDVI Delta (T2 - T1)</span>
-              <span className="text-cyan-400 font-bold text-base">
+              <span className="text-zinc-400 text-xs block uppercase">NDVI Delta (T2 - T1)</span>
+              <span className="text-cyan-400 font-bold text-lg">
                 {stats.ndvi_change != null ? stats.ndvi_change.toFixed(3) : "N/A"}
               </span>
-              <span className="text-[10px] text-zinc-500 block mt-0.5">Mean Difference</span>
+              <span className="text-xs text-zinc-500 block mt-0.5">Mean Difference</span>
             </div>
 
             <div className="p-3 rounded-lg border border-zinc-800 bg-zinc-950 font-mono">
-              <span className="text-zinc-500 text-[10px] block uppercase">Mean Spectral Diff</span>
-              <span className="text-zinc-200 font-bold text-base">
+              <span className="text-zinc-400 text-xs block uppercase">Mean Spectral Diff</span>
+              <span className="text-zinc-200 font-bold text-lg">
                 {stats.mean_spectral_diff != null ? stats.mean_spectral_diff.toFixed(4) : "N/A"}
               </span>
-              <span className="text-[10px] text-zinc-500 block mt-0.5">Euclidean Norm</span>
+              <span className="text-xs text-zinc-500 block mt-0.5">Euclidean Norm</span>
             </div>
 
             <div className="p-3 rounded-lg border border-zinc-800 bg-zinc-950 font-mono">
-              <span className="text-zinc-500 text-[10px] block uppercase">Max Magnitude</span>
-              <span className="text-zinc-200 font-bold text-base">
+              <span className="text-zinc-400 text-xs block uppercase">Max Magnitude</span>
+              <span className="text-zinc-200 font-bold text-lg">
                 {stats.max_change_magnitude != null ? stats.max_change_magnitude.toFixed(3) : "N/A"}
               </span>
-              <span className="text-[10px] text-zinc-500 block mt-0.5">Peak Anomaly</span>
+              <span className="text-xs text-zinc-500 block mt-0.5">Peak Anomaly</span>
             </div>
           </div>
 
           {changeData.interpretation && (
-            <div className="p-3.5 rounded-xl border border-zinc-800 bg-zinc-950 font-mono text-xs text-zinc-300">
+            <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-950 font-mono text-xs text-zinc-300">
               <span className="font-bold text-amber-300 uppercase block mb-1">
                 Automated Analytical Interpretation:
               </span>
-              <p>{changeData.interpretation}</p>
+              <p className="leading-relaxed">{changeData.interpretation}</p>
             </div>
           )}
 
           {changeData.disclaimer && (
-            <div className="rounded-lg bg-amber-950/20 border border-amber-800/40 p-2.5 text-xs font-mono text-amber-300/80 flex items-start gap-2">
+            <div className="rounded-lg bg-amber-950/20 border border-amber-800/40 p-3 text-xs font-mono text-amber-300/80 flex items-start gap-2.5">
               <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
               <span>{changeData.disclaimer}</span>
             </div>
           )}
         </div>
       ) : (
-        <div className="p-12 rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 text-center font-mono text-xs text-zinc-500 flex flex-col items-center gap-3">
-          <History className="w-8 h-8 text-zinc-700" />
-          <span>Select T1 and T2 from samples or active runs, then click "Execute Change Detection".</span>
+        <div className="p-12 rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 text-center font-mono text-sm text-zinc-400 flex flex-col items-center gap-3">
+          <History className="w-8 h-8 text-zinc-600" />
+          <span>Select two compatible scenes to compare.</span>
         </div>
       )}
     </div>

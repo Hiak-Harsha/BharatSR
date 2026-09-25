@@ -9,6 +9,8 @@ export default defineConfig({
     include: ["tests/**/*.{test,spec}.{ts,tsx}"],
     exclude: ["node_modules", "dist", ".next"],
     css: false,
+    pool: "threads",
+    fileParallelism: false,
   },
   resolve: {
     alias: {

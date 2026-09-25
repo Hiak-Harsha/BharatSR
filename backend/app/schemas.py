@@ -63,6 +63,7 @@ class SampleMetadata(BaseModel):
 
 
 class SampleInfo(BaseModel):
+    model_config = ConfigDict(extra="allow")
     id: str
     filename: str
     title: str
@@ -73,6 +74,12 @@ class SampleInfo(BaseModel):
     bands: int
     lr_size: str
     has_ground_truth: bool
+    has_reference: bool = True
+    is_independent_hr: bool = False
+    reference_type: str = "none"
+    reference_provenance: str = "No reference available"
+    acquisition_date: Optional[str] = None
+    gsd: Optional[str] = None
     has_geo: bool
     crs: Optional[str] = None
     sensor: Optional[str] = None
@@ -208,10 +215,12 @@ class JobListResponse(BaseModel):
 
 
 class ReportResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
     title: str
     problem_statement: str
     target_organization: str
-    sample_id: str
+    sample_id: Optional[str] = None
+    run_id: Optional[str] = None
     model_id: str
     scale_factor: str
     input_dimension: List[int]
@@ -220,6 +229,9 @@ class ReportResponse(BaseModel):
     metrics: Dict[str, Any]
     uncertainty_summary: Optional[Dict[str, Any]] = None
     spectral_integrity_compliance: Dict[str, Any]
+    geospatial_metadata: Optional[Dict[str, Any]] = None
+    created_at: Optional[str] = None
+    quality: Optional[str] = None
 
 
 class SpectralIndicesResponse(BaseModel):
@@ -297,3 +309,99 @@ class ModelReloadResponse(BaseModel):
     model_id: str
     checkpoint: str
     metadata: Optional[Dict[str, Any]] = None
+
+
+# ==========================================
+# Dataset & Training Transparency Schemas (Part E)
+# ==========================================
+
+class DatasetSplitCounts(BaseModel):
+    train: int
+    val: int
+    test: int
+
+
+class DatasetDateRange(BaseModel):
+    min: str
+    max: str
+
+
+class DatasetSummaryResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    total_scenes: int
+    splits: DatasetSplitCounts
+    synthetic_count: int
+    real_count: int
+    regions: List[str]
+    sensors: List[str]
+    date_range: DatasetDateRange
+    mean_cloud_fraction: float
+    mean_registration_rmse: float
+
+
+class SceneRecord(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    scene_id: str
+    region: str
+    date: str
+    split: str
+    is_synthetic: bool
+    source_dataset: str
+    sensor: str
+    cloud_fraction: float
+    registration_rmse: float
+    crs: Optional[str] = None
+    reflectance_range: Optional[List[float]] = None
+
+
+class DatasetScenesResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    total: int
+    offset: int
+    limit: int
+    scenes: List[SceneRecord]
+
+
+class PreprocessingStageInfo(BaseModel):
+    stage: str
+    title: str
+    description: str
+    image: str
+
+
+class PreprocessingSampleResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    scene_id: str
+    region: str
+    stages: List[PreprocessingStageInfo]
+    training_pair: Dict[str, str]
+
+
+class EpochMetric(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    epoch: int
+    loss: float
+    psnr: Optional[float] = None
+    ssim: Optional[float] = None
+    lr: Optional[float] = None
+
+
+class TrainingHistoryResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    model_name: str
+    is_final_only: bool
+    epochs: List[EpochMetric]
+    final_metrics: Dict[str, Any]
+    summary_note: Optional[str] = None
+
+
+class ModelCardResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    model_name: str
+    architecture: str
+    parameters_count: int
+    key_design: str
+    training_config: Dict[str, Any]
+    final_metrics: Dict[str, Any]
+    recommended_use: str
+

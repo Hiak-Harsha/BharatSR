@@ -10,9 +10,10 @@ import { ImageComparisonSlider } from "@/components/ui/ImageComparisonSlider";
 import { PixelProfileChart } from "@/components/charts/PixelProfileChart";
 import { UncertaintyScatterChart } from "@/components/charts/UncertaintyScatterChart";
 import { GeospatialViewer } from "@/components/map/GeospatialViewer";
-import { Play, Sparkles, Activity, ShieldCheck, Download, AlertCircle, Clock, CheckCircle2, Crosshair } from "lucide-react";
+import { Play, Sparkles, Activity, ShieldCheck, Download, AlertCircle, Clock, CheckCircle2, Crosshair, ChevronDown, ChevronUp } from "lucide-react";
 import { formatTime, cn } from "@/lib/utils";
 import { PixelResolveCanvas } from "@/components/effects/PixelResolveCanvas";
+import { PixelDissolve } from "@/components/effects/PixelDissolve";
 import { getSamplePreview } from "@/lib/api-client";
 
 export function InferencePanel({ className }: { className?: string }) {
@@ -22,6 +23,7 @@ export function InferencePanel({ className }: { className?: string }) {
   const currentQuality = useConsoleStore((s) => s.currentQuality);
   const currentRunId = useConsoleStore((s) => s.currentRunId);
   const setCurrentRunId = useConsoleStore((s) => s.setCurrentRunId);
+  const setCurrentSession = useConsoleStore((s) => s.setCurrentSession);
 
   const [inspectedPoint, setInspectedPoint] = useState<{ x: number; y: number } | null>(null);
   const [isAsyncMode, setIsAsyncMode] = useState<boolean>(false);
@@ -30,6 +32,7 @@ export function InferencePanel({ className }: { className?: string }) {
   const [asyncError, setAsyncError] = useState<string | null>(null);
   const [asyncResult, setAsyncResult] = useState<SuperResolveResponse | null>(null);
   const [samplePreviewUrl, setSamplePreviewUrl] = useState<string>("/satellite_demo.png");
+  const [showManualLens, setShowManualLens] = useState<boolean>(false);
 
   useEffect(() => {
     async function loadSamplePreview() {
@@ -54,9 +57,32 @@ export function InferencePanel({ className }: { className?: string }) {
     error: syncError,
   } = useSuperresolve();
 
+  // Hydrate AnalysisSession on sync inference completion
+  useEffect(() => {
+    if (syncResult && syncResult.run_id) {
+      setCurrentRunId(syncResult.run_id);
+      setCurrentSession({
+        runId: syncResult.run_id,
+        sampleId: selectedSample,
+        fileName: customFile?.name || null,
+        inputType: customFile ? "upload" : "sample",
+        modelId: selectedModel,
+        quality: currentQuality,
+        status: "completed",
+        createdAt: new Date().toISOString(),
+        inputMetadata: syncResult.input as any,
+        outputMetadata: syncResult.output as any,
+        metrics: syncResult.metrics as any,
+        uncertainty: syncResult.uncertainty as any,
+        geospatialMetadata: syncResult.geospatial_metadata as any,
+        provenance: (syncResult.geospatial_metadata as any)?.source_dataset || "Sentinel-2 L2A",
+      });
+    }
+  }, [syncResult, setCurrentRunId, setCurrentSession, selectedSample, customFile, selectedModel, currentQuality]);
+
   const { data: jobData } = useJobPolling(activeJobId);
 
-  // When async job completes, parse result
+  // When async job completes, parse result and hydrate AnalysisSession
   useEffect(() => {
     if (jobData?.status === "completed" && jobData.result) {
       try {
@@ -66,12 +92,29 @@ export function InferencePanel({ className }: { className?: string }) {
         setAsyncResult(parsed);
         if (parsed.run_id) {
           setCurrentRunId(parsed.run_id);
+          setCurrentSession({
+            runId: parsed.run_id,
+            jobId: activeJobId,
+            sampleId: selectedSample,
+            fileName: customFile?.name || null,
+            inputType: customFile ? "upload" : "sample",
+            modelId: selectedModel,
+            quality: currentQuality,
+            status: "completed",
+            createdAt: new Date().toISOString(),
+            inputMetadata: parsed.input as any,
+            outputMetadata: parsed.output as any,
+            metrics: parsed.metrics as any,
+            uncertainty: parsed.uncertainty as any,
+            geospatialMetadata: parsed.geospatial_metadata as any,
+            provenance: (parsed.geospatial_metadata as any)?.source_dataset || "Sentinel-2 L2A",
+          });
         }
       } catch (e) {
         console.error("Failed to parse async job result:", e);
       }
     }
-  }, [jobData, setCurrentRunId]);
+  }, [jobData, activeJobId, setCurrentRunId, setCurrentSession, selectedSample, customFile, selectedModel, currentQuality]);
 
   const {
     mutate: inspectPixel,
@@ -136,9 +179,9 @@ export function InferencePanel({ className }: { className?: string }) {
           <p className="mt-1 font-mono text-xs text-zinc-400">
             {customFile
               ? `Input: Custom upload "${customFile.name}"`
-              : `Input: ${selectedSample || "No sample selected"}`}{" "}
+              : `Input: ${selectedSample || "Sentinel-2 L2A"}`}{" "}
             • Model: {selectedModel.toUpperCase()} • Mode:{" "}
-            {currentQuality === "high" ? "D4 Self-Ensemble TTA (High)" : "Single Pass (Fast)"}
+            {currentQuality === "high" ? "High Quality / 4-way Self-Ensemble (~4× work)" : "Single Pass (Fast)"}
           </p>
         </div>
 
@@ -251,6 +294,48 @@ export function InferencePanel({ className }: { className?: string }) {
 
           return (
             <>
+              {/* RUN COMPLETE Canonical Status Banner */}
+              <div className="p-4 rounded-xl border border-emerald-800/60 bg-emerald-950/20 font-mono text-xs">
+                <div className="flex items-center gap-2 mb-2 pb-2 border-b border-emerald-800/40">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  <span className="font-bold text-emerald-300 uppercase tracking-wider text-sm">
+                    RUN COMPLETE &bull; {srResult.run_id || currentRunId}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3 text-zinc-300">
+                  <div>
+                    <span className="text-zinc-500 block text-[11px] uppercase">Model</span>
+                    <span className="font-bold text-zinc-100">{srResult.model_id.toUpperCase()}</span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500 block text-[11px] uppercase">Input</span>
+                    <span className="font-semibold text-zinc-200">
+                      {geoMetadata?.source_dataset ? "Sentinel-2 L2A" : "Demo Scene"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500 block text-[11px] uppercase">Bands</span>
+                    <span className="font-semibold text-zinc-200">B2 / B3 / B4 / B8</span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500 block text-[11px] uppercase">Input Dim</span>
+                    <span className="font-semibold text-zinc-200">
+                      {input?.shape ? `${input.shape[1]} × ${input.shape[2]}` : "64 × 64"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500 block text-[11px] uppercase">Output Dim</span>
+                    <span className="font-semibold text-zinc-200">
+                      {output?.shape ? `${output.shape[1]} × ${output.shape[2]}` : "256 × 256"} (4×)
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-zinc-500 block text-[11px] uppercase">Output Grid</span>
+                    <span className="font-bold text-emerald-400">2.5m-equivalent SR</span>
+                  </div>
+                </div>
+              </div>
+
               <ImageComparisonSlider
                 beforeSrc={input.image}
                 beforeViews={input.views}
@@ -263,7 +348,7 @@ export function InferencePanel({ className }: { className?: string }) {
                 uncertaintySrc={uncertainty?.image}
                 errorMapSrc={errorMap?.image}
                 beforeLabel="Low-Resolution Input (10m)"
-                afterLabel={`BharatSR (${srResult.model_id.toUpperCase()} 2.5m)`}
+                afterLabel={`BharatSR (${srResult.model_id.toUpperCase()} 2.5m-equivalent SR grid)`}
                 inspectedPoint={inspectedPoint}
                 onInspectPixel={handlePixelClick}
                 imageDimensions={dimensions}
@@ -271,48 +356,48 @@ export function InferencePanel({ className }: { className?: string }) {
 
               {/* Scientific Telemetry Strip */}
               <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                <div className="p-3 rounded-lg border border-zinc-800 bg-zinc-950 font-mono">
-                  <span className="text-zinc-500 block text-[11px] uppercase">Latency</span>
-                  <span className="text-zinc-200 font-bold text-sm">
+                <div className="p-3.5 rounded-lg border border-zinc-800 bg-zinc-950 font-mono">
+                  <span className="text-zinc-400 block text-xs uppercase font-semibold">Latency</span>
+                  <span className="text-zinc-100 font-bold text-sm">
                     {formatTime(srResult.inference_time_s)}
                   </span>
-                  <span className="text-[10px] text-zinc-500 block mt-0.5">End-to-End</span>
+                  <span className="text-xs text-zinc-500 block mt-1">End-to-End</span>
                 </div>
 
-                <div className="p-3 rounded-lg border border-zinc-800 bg-zinc-950 font-mono">
-                  <span className="text-zinc-500 block text-[11px] uppercase">PSNR</span>
+                <div className="p-3.5 rounded-lg border border-zinc-800 bg-zinc-950 font-mono">
+                  <span className="text-zinc-400 block text-xs uppercase font-semibold">PSNR</span>
                   <span className="text-emerald-400 font-bold text-sm">
                     {metrics?.psnr?.value != null ? `${Number(metrics.psnr.value).toFixed(2)} dB` : "N/A"}
                   </span>
-                  <span className="text-[10px] text-zinc-500 block mt-0.5">
+                  <span className="text-xs text-zinc-500 block mt-1">
                     {metrics?.psnr?.quality || "Peak Signal-to-Noise"}
                   </span>
                 </div>
 
-                <div className="p-3 rounded-lg border border-zinc-800 bg-zinc-950 font-mono">
-                  <span className="text-zinc-500 block text-[11px] uppercase">SSIM</span>
+                <div className="p-3.5 rounded-lg border border-zinc-800 bg-zinc-950 font-mono">
+                  <span className="text-zinc-400 block text-xs uppercase font-semibold">SSIM</span>
                   <span className="text-emerald-400 font-bold text-sm">
                     {metrics?.ssim?.value != null ? Number(metrics.ssim.value).toFixed(4) : "N/A"}
                   </span>
-                  <span className="text-[10px] text-zinc-500 block mt-0.5">Structural Fidelity</span>
+                  <span className="text-xs text-zinc-500 block mt-1">Structural Fidelity</span>
                 </div>
 
-                <div className="p-3 rounded-lg border border-zinc-800 bg-zinc-950 font-mono">
-                  <span className="text-zinc-500 block text-[11px] uppercase">SAM Angle</span>
+                <div className="p-3.5 rounded-lg border border-zinc-800 bg-zinc-950 font-mono">
+                  <span className="text-zinc-400 block text-xs uppercase font-semibold">SAM Angle</span>
                   <span className="text-cyan-400 font-bold text-sm">
                     {metrics?.sam?.value != null ? `${Number(metrics.sam.value).toFixed(2)}°` : "N/A"}
                   </span>
-                  <span className="text-[10px] text-zinc-500 block mt-0.5">Spectral Mapper</span>
+                  <span className="text-xs text-zinc-500 block mt-1">Spectral Mapper</span>
                 </div>
 
-                <div className="p-3 rounded-lg border border-zinc-800 bg-zinc-950 font-mono">
-                  <span className="text-zinc-500 block text-[11px] uppercase">Downsample MAE</span>
+                <div className="p-3.5 rounded-lg border border-zinc-800 bg-zinc-950 font-mono">
+                  <span className="text-zinc-400 block text-xs uppercase font-semibold">Observation Consistency</span>
                   <span className="text-amber-400 font-bold text-sm">
                     {metrics?.downsample_consistency?.value != null
                       ? Number(metrics.downsample_consistency.value).toFixed(4)
                       : "N/A"}
                   </span>
-                  <span className="text-[10px] text-zinc-500 block mt-0.5">Physics Preservation</span>
+                  <span className="text-xs text-zinc-500 block mt-1">Downsample Consistency</span>
                 </div>
               </div>
 
@@ -343,38 +428,77 @@ export function InferencePanel({ className }: { className?: string }) {
           );
         })()
       ) : (
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5 rounded-lg bg-zinc-950 border border-zinc-800 font-mono text-xs shadow-md">
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping" />
-              <span className="text-zinc-200 font-bold">Interactive Optical Sensor Lens</span>
-              <span className="text-zinc-500 hidden sm:inline">· 10m Raw S2 Blocks &rarr; 2.5m Analytical Focus</span>
+        <div className="flex flex-col gap-6">
+          {/* Pre-Run Primary Preview with PixelDissolve */}
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 rounded-xl bg-zinc-900/60 border border-zinc-800 font-mono text-xs">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
+                <span className="text-zinc-200 font-bold">Input Sentinel-2 Tile Preview</span>
+                <span className="text-zinc-500 hidden sm:inline">· 10m Ground Sample Distance</span>
+              </div>
+              <button
+                type="button"
+                onClick={handleRun}
+                disabled={isInferring || (!selectedSample && !customFile)}
+                className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold transition flex items-center gap-2 shadow-lg shadow-amber-500/20 active:scale-95"
+              >
+                <Play className="w-4 h-4 fill-current" />
+                <span>Execute 4× Super-Resolution</span>
+              </button>
             </div>
+
+            <div className="relative aspect-square w-full max-h-[520px] rounded-2xl overflow-hidden border border-zinc-800 bg-zinc-950 shadow-2xl flex items-center justify-center p-2">
+              <PixelDissolve
+                src={samplePreviewUrl || "/satellite_demo.png"}
+                alt="Selected Sentinel-2 10m input tile preview"
+                className="w-full max-h-[500px]"
+                pixelSize={20}
+                duration={700}
+                trigger="hover"
+                label="Hover to resolve preview"
+              />
+            </div>
+
+            <div className="flex items-center justify-between text-xs font-mono text-zinc-500 px-1">
+              <span>Scene Target: <strong className="text-zinc-300">{selectedSample || "sample_real_s2"}</strong> (10m L2A BOA Reflectance)</span>
+              <span className="text-zinc-400 text-[11px]">Hover image to preview 4× spatial resolution</span>
+            </div>
+          </div>
+
+          {/* Optional Collapsed Disclosure: Manual Optical Lens (Part A.3 / Part D.1) */}
+          <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/40 overflow-hidden">
             <button
               type="button"
-              onClick={handleRun}
-              className="px-3.5 py-1.5 rounded-md bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold transition flex items-center gap-1.5 shadow"
+              onClick={() => setShowManualLens((prev) => !prev)}
+              className="w-full flex items-center justify-between px-4 py-3 font-mono text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-850/50 transition"
             >
-              <Play className="w-3.5 h-3.5 fill-current" />
-              <span>Execute 4x Super-Resolution</span>
+              <div className="flex items-center gap-2">
+                <Crosshair className="w-4 h-4 text-amber-400" />
+                <span className="font-semibold text-zinc-300">Advanced: Manual Optical Lens (Spotlight Magnifier)</span>
+                <span className="text-[10px] text-zinc-500 hidden sm:inline">(Interactive pointer exploration)</span>
+              </div>
+              <div className="flex items-center gap-1.5 text-zinc-500">
+                <span className="text-[10px] uppercase font-bold">{showManualLens ? "Hide" : "Expand"}</span>
+                {showManualLens ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </div>
             </button>
-          </div>
 
-          <div className="relative aspect-square w-full max-h-[540px] rounded-xl overflow-hidden border border-zinc-800 bg-zinc-950 shadow-2xl">
-            <PixelResolveCanvas
-              src={samplePreviewUrl || "/satellite_demo.png"}
-              alt="Interactive Optical Resolving Lens"
-              className="w-full h-full"
-              overlayLabel="Hover / drag cursor over 10m raw sensor pixels to resolve 2.5m detail"
-            />
-          </div>
-
-          <div className="flex items-center justify-between text-[11px] font-mono text-zinc-500 px-1">
-            <span>Tile: {selectedSample || "sample_real_s2"} (10m Native Sentinel-2 BOA Reflectance)</span>
-            <span className="text-amber-400 flex items-center gap-1">
-              <Crosshair className="w-3.5 h-3.5" />
-              <span>Move pointer across the image to resolve pixels</span>
-            </span>
+            {showManualLens && (
+              <div className="p-4 border-t border-zinc-800 space-y-3 animate-in fade-in duration-200">
+                <div className="relative aspect-square w-full max-h-[460px] rounded-xl overflow-hidden border border-zinc-800 bg-zinc-950 shadow-inner">
+                  <PixelResolveCanvas
+                    src={samplePreviewUrl || "/satellite_demo.png"}
+                    alt="Manual Optical Resolving Lens"
+                    className="w-full h-full"
+                    overlayLabel="Hover / drag cursor over 10m raw sensor pixels to resolve 2.5m detail"
+                  />
+                </div>
+                <div className="text-[11px] font-mono text-zinc-500">
+                  Move cursor over the circular lens area to magnify and resolve localized 2.5m details.
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

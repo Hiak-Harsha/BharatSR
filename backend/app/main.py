@@ -32,6 +32,7 @@ from backend.app.routers.batch import router as batch_router
 from backend.app.routers.export import router as export_router
 from backend.app.routers.analysis import router as analysis_router
 from backend.app.routers.admin import router as admin_router
+from backend.app.routers.dataset import router as dataset_router
 
 logger = get_logger("bharatsr.main")
 
@@ -105,7 +106,23 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["X-Request-ID", "X-Response-Time", "Content-Disposition"],
     )
+
+    @app.middleware("http")
+    async def request_id_and_telemetry_middleware(request, call_next):
+        import uuid
+        import time
+        req_id = request.headers.get("X-Request-ID") or f"req_{uuid.uuid4().hex[:12]}"
+        start_time = time.time()
+        response = await call_next(request)
+        latency_ms = round((time.time() - start_time) * 1000, 2)
+        response.headers["X-Request-ID"] = req_id
+        response.headers["X-Response-Time"] = f"{latency_ms}ms"
+        logger.info(
+            f"[{req_id}] {request.method} {request.url.path} -> {response.status_code} ({latency_ms}ms)"
+        )
+        return response
 
     # Register standardized error handlers
     register_exception_handlers(app)
@@ -120,6 +137,7 @@ def create_app() -> FastAPI:
     app.include_router(export_router)
     app.include_router(analysis_router)
     app.include_router(admin_router)
+    app.include_router(dataset_router)
 
     return app
 

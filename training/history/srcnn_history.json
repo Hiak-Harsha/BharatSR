@@ -1,0 +1,51 @@
+{
+  "model_name": "srcnn",
+  "config_name": "B_SRCNN_L1",
+  "architecture": "SRCNN Baseline (Bicubic pre-upsampling + 3 Conv layers)",
+  "num_parameters": 26084,
+  "train_history": [
+    {
+      "epoch": 1,
+      "train_loss": 0.0593,
+      "val_loss": 0.024
+    },
+    {
+      "epoch": 2,
+      "train_loss": 0.0227,
+      "val_loss": 0.02
+    },
+    {
+      "epoch": 3,
+      "train_loss": 0.0208,
+      "val_loss": 0.0193
+    },
+    {
+      "epoch": 4,
+      "train_loss": 0.0201,
+      "val_loss": 0.0191
+    },
+    {
+      "epoch": 5,
+      "train_loss": 0.02,
+      "val_loss": 0.0189
+    },
+    {
+      "epoch": 6,
+      "train_loss": 0.0198,
+      "val_loss": 0.0189
+    }
+  ],
+  "final_metrics": {
+    "psnr_db": 31.224,
+    "ssim": 0.7273,
+    "sam_degrees": 3.8547,
+    "downsample_consistency_mae": 0.0066,
+    "spectral_mae": 0.019,
+    "gradient_similarity": 0.7567,
+    "false_edge_rate": 0.9596,
+    "missing_edge_rate": 0.9879,
+    "high_frequency_excess_rate": 0.027,
+    "correctness_score": 0.4702
+  },
+  "is_final_only": false
+}

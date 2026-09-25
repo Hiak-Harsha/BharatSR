@@ -7,6 +7,7 @@ import asyncio
 import base64
 import json
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
@@ -87,6 +88,11 @@ def _run_superresolve_sync(
             geo_json=json.dumps(geo_metadata) if geo_metadata else "",
             model_id=model_id,
             scale_factor=scale_factor,
+            quality=quality,
+            metrics_json=json.dumps(result.metrics),
+            uncertainty_json=json.dumps(result.response_dict.get("uncertainty") or {}),
+            inference_time_s=float(result.latency),
+            created_at=datetime.now(timezone.utc).isoformat(),
         )
     except Exception as e:
         logger.warning(f"Could not cache run {run_id}: {e}")
@@ -292,10 +298,10 @@ def _run_compare_sync(
         ("psnr", "PSNR (Peak SNR)", "dB", True),
         ("ssim", "SSIM (Structural Similarity)", "", True),
         ("sam", "SAM (Spectral Angle Mapper)", "°", False),
-        ("downsample_consistency", "Downsample Consistency", "MAE", False),
+        ("downsample_consistency", "Observation Consistency (Downsample MAE)", "MAE", False),
         ("spectral_mae", "Mean Absolute Spectral Error", "", False),
-        ("correctness_score", "Correctness Score", "", True),
-        ("hallucination_rate", "Hallucination Rate", "", False),
+        ("correctness_score", "Correctness Diagnostic Score", "", True),
+        ("hallucination_rate", "High-Frequency / False-Edge Diagnostic", "", False),
     ]
 
     for key, label, unit, higher_is_better in metric_keys:
@@ -344,6 +350,11 @@ def _run_compare_sync(
                 geo_json=json.dumps(geo_metadata) if geo_metadata else "",
                 model_id=best_model,
                 scale_factor=4,
+                quality="fast",
+                metrics_json=json.dumps(results.get(best_model, {}).get("metrics", {})),
+                uncertainty_json=json.dumps(results.get(best_model, {}).get("uncertainty") or {}),
+                inference_time_s=float(results.get(best_model, {}).get("inference_time_s", 0.0)),
+                created_at=datetime.now(timezone.utc).isoformat(),
             )
         except Exception as e:
             logger.warning(f"Could not cache compare run: {e}")

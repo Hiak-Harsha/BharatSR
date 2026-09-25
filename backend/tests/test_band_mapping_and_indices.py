@@ -142,3 +142,62 @@ def test_explicit_input_modes_and_product_aware_scaling():
     # 4. Unknown mode raises ValueError
     with pytest.raises(ValueError):
         normalize_reflectance(float_arr, mode="unknown_invalid_mode")
+
+
+def test_reject_unmapped_multiband_raster():
+    """
+    Verify that an uploaded raster with >4 bands is REJECTED if Sentinel-2 bands
+    cannot be identified from descriptions, and is NOT silently sliced to img[:4].
+    """
+    import rasterio
+    from rasterio.transform import from_origin
+
+    buf = io.BytesIO()
+    # 6-band synthetic GeoTIFF with generic descriptions
+    with rasterio.open(
+        buf,
+        "w",
+        driver="GTiff",
+        height=16,
+        width=16,
+        count=6,
+        dtype="float32",
+        crs="EPSG:32643",
+        transform=from_origin(500000, 3000000, 10, 10),
+    ) as dst:
+        for i in range(1, 7):
+            dst.write(np.full((16, 16), float(i * 0.1), dtype=np.float32), i)
+            dst.set_band_description(i, f"Band_{i}")
+
+    tif_bytes = buf.getvalue()
+
+    # Must raise ValueError because B2, B3, B4, B8 are not labeled
+    with pytest.raises(ValueError) as exc:
+        load_image_from_bytes(tif_bytes)
+    assert "could not be identified" in str(exc.value)
+
+    # With explicit band mapping, it must succeed
+    img, geo = load_image_from_bytes(
+        tif_bytes,
+        band_mapping={"B2": 0, "B3": 1, "B4": 2, "B8": 3},
+    )
+    assert img.shape == (4, 16, 16)
+    assert geo is not None
+    assert geo["has_geo"] is True
+
+
+def test_metadata_aware_normalization_conventions():
+    """Verify metadata-driven normalization with scales and quantification tags."""
+    arr = np.array([1000.0, 5000.0, 10000.0], dtype=np.float32)
+
+    # 1. Using explicit scale metadata (0.0001)
+    norm_scale = normalize_reflectance(arr, mode="auto", scales=[0.0001])
+    assert np.allclose(norm_scale, [0.1, 0.5, 1.0])
+
+    # 2. Using Sentinel-2 QUANTIFICATION_VALUE tag
+    norm_tag = normalize_reflectance(arr, mode="auto", tags={"QUANTIFICATION_VALUE": "10000"})
+    assert np.allclose(norm_tag, [0.1, 0.5, 1.0])
+
+    # 3. Using uint16 dtype hint
+    norm_u16 = normalize_reflectance(arr, mode="auto", dtype_hint="uint16")
+    assert np.allclose(norm_u16, [0.1, 0.5, 1.0])

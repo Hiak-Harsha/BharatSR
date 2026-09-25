@@ -3,25 +3,25 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { getSamples, getSamplePreview, SampleTile, SamplePreviewResponse } from "@/lib/api";
-import { PixelResolveCanvas } from "@/components/effects/PixelResolveCanvas";
+import { PixelDissolve } from "@/components/effects/PixelDissolve";
+import { OrbitScene } from "@/components/effects/OrbitScene";
 
 const METRICS = [
-  { n: "2.94°", l: "Spectral Angle (real S2) · target <5°" },
-  { n: "0.0108", l: "Downsample-consistency MAE" },
-  { n: "+7.88%", l: "Micro-canopy precision gain" },
-  { n: "0.239", l: "OpenSR hallucination score ↓ vs 0.344 SRCNN" },
+  { n: "2.94°", l: "Verified Benchmark: Spectral Angle (SAM) · internal target <5°" },
+  { n: "0.0108", l: "Verified Benchmark: Observation Consistency (Downsample MAE)" },
+  { n: "+7.88%", l: "Verified Benchmark: Downstream Canopy Precision Gain" },
+  { n: "0.239", l: "OpenSR-inspired high-frequency diagnostic score ↓ vs 0.344 SRCNN" },
 ];
 
 const PIPELINE = [
-  { k: "01", title: "Calibrated Ingestion", body: "4-band reflectance normalization, CRS & affine transform preserved." },
-  { k: "02", title: "RCAN Super-Resolution", body: "Residual-in-residual channel attention, 4x sub-pixel upsampling." },
-  { k: "03", title: "Physics Verification", body: "SAM angle + downsample-consistency + uncertainty map." },
-  { k: "04", title: "GIS Export", body: "Float32 Cloud-Optimized GeoTIFF, QGIS/ArcGIS ready." },
+  { k: "01", title: "Physical Ingestion", body: "4-band Sentinel-2 reflectance normalization, CRS & affine transform preserved." },
+  { k: "02", title: "Deep Super-Resolution", body: "Residual channel attention & Transformer networks, 4x sub-pixel upsampling." },
+  { k: "03", title: "Observation Verification", body: "SAM angle + observation consistency + predicted uncertainty map." },
+  { k: "04", title: "Geospatial Export", body: "Georeferenced Float32 GeoTIFF, QGIS/ArcGIS ready on 2.5m-equivalent grid." },
 ];
 
 export default function LandingPage() {
   const [preview, setPreview] = useState<SamplePreviewResponse | null>(null);
-  const [previewError, setPreviewError] = useState(false);
 
   useEffect(() => {
     async function loadPreview() {
@@ -32,18 +32,51 @@ export default function LandingPage() {
         const p = await getSamplePreview(preferred.id, 32);
         setPreview(p);
       } catch {
-        // Backend offline or unreachable — the strip below falls back to a static placeholder.
-        setPreviewError(true);
+        // Backend offline — static fallbacks render via || paths below
       }
     }
     loadPreview();
   }, []);
 
-  const panels: Array<{ tag: string; hi?: boolean; caption: string; sub: string; src?: string }> = [
-    { tag: "Sentinel-2 · 10m", caption: "Raw LR input", sub: "10m GSD", src: preview?.views.lr },
-    { tag: "Bicubic", caption: "Interpolated", sub: "no new detail", src: preview?.views.bicubic },
-    { tag: "BharatSR", hi: true, caption: "RCAN output", sub: "2.5m-equiv", src: preview?.views.sr },
-    { tag: "Ground Truth", caption: "Reference", sub: "held-out HR", src: preview?.views.ground_truth },
+  const panels: Array<{
+    tag: string;
+    hi?: boolean;
+    caption: string;
+    sub: string;
+    src: string;
+    detail: string;
+    pixelated?: boolean;
+  }> = [
+    {
+      tag: "Sentinel-2 · 10m",
+      caption: "Raw LR Input",
+      sub: "10m GSD",
+      src: preview?.views.lr || "/samples/lr.png",
+      detail: "Karnataka Bellary · 2024-01-15",
+      pixelated: true,
+    },
+    {
+      tag: "Bicubic",
+      caption: "Interpolated",
+      sub: "no new detail",
+      src: preview?.views.bicubic || "/samples/bicubic.png",
+      detail: "Standard cubic resampling",
+    },
+    {
+      tag: "BharatSR",
+      hi: true,
+      caption: "RCAN Output",
+      sub: "2.5m-equiv",
+      src: preview?.views.sr || "/samples/sr.png",
+      detail: "Physics-constrained 4× SR",
+    },
+    {
+      tag: "Reference",
+      caption: "Demonstration Ref",
+      sub: "bicubic-derived",
+      src: preview?.views.ground_truth || "/samples/reference.png",
+      detail: "Demonstration-derived reference",
+    },
   ];
 
   return (
@@ -71,7 +104,13 @@ export default function LandingPage() {
       {/* HERO */}
       <header className="relative px-6 pt-16 pb-10 overflow-hidden">
         <div className="bsr-hero-grid" />
-        <div className="max-w-[1100px] mx-auto relative">
+
+        {/* OrbitScene — background ambient layer */}
+        <div className="absolute inset-0 pointer-events-none opacity-40" style={{ zIndex: 0 }}>
+          <OrbitScene />
+        </div>
+
+        <div className="max-w-[1100px] mx-auto relative" style={{ zIndex: 1 }}>
           <div className="flex flex-col lg:flex-row items-center justify-between gap-10">
             <div className="w-full lg:w-1/2 flex flex-col gap-4">
               <div className="text-[11px] tracking-[.16em] uppercase" style={{ color: "var(--bsr-phosphor)" }}>
@@ -93,30 +132,33 @@ export default function LandingPage() {
                   Benchmark Perspectives &darr;
                 </a>
               </div>
-              <div className="flex items-center gap-4 text-xs font-mono text-zinc-500 pt-2">
+              <div className="flex items-center gap-4 text-xs font-mono text-zinc-400 pt-2">
                 <span>Native GSD: <b className="text-amber-400">10.0m</b></span>
                 <span>•</span>
-                <span>SR Output: <b className="text-cyan-400">2.5m</b></span>
+                <span>SR Output: <b className="text-cyan-400">2.5m-equiv</b></span>
                 <span>•</span>
-                <span>Physics MAE: <b className="text-emerald-400">0.000</b></span>
+                <span>Observation Consistency MAE: <b className="text-emerald-400">0.000</b></span>
               </div>
             </div>
 
-            {/* HERO INTERACTIVE LENS SHOWCASE */}
+            {/* HERO PIXEL DISSOLVE SHOWCASE */}
             <div className="w-full lg:w-1/2 max-w-[460px] shrink-0">
               <div className="p-3.5 rounded-2xl border border-zinc-800 bg-zinc-950/90 backdrop-blur-md shadow-[0_0_50px_rgba(245,158,11,0.15)]">
                 <div className="flex items-center justify-between px-1 pb-2 text-[11px] font-mono">
                   <span className="text-amber-400 font-bold flex items-center gap-1.5">
                     <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-                    LIVE SENSOR FOCUS LENS
+                    PIXEL RESOLVE DEMO
                   </span>
                   <span className="text-zinc-400 text-[10px]">10m RAW &rarr; 2.5m RESOLVED</span>
                 </div>
-                <PixelResolveCanvas
-                  src={preview?.views.sr || "/satellite_demo.png"}
-                  alt="Interactive Optical Resolving Lens"
-                  className="w-full aspect-square"
-                  overlayLabel="Move cursor / drag touch across tile to resolve 10m pixels"
+                <PixelDissolve
+                  src={preview?.views.sr || "/samples/sr.png"}
+                  alt="BharatSR super-resolution pixel dissolve demonstration"
+                  className="w-full"
+                  pixelSize={24}
+                  duration={700}
+                  trigger="hover"
+                  label="Hover to resolve"
                 />
               </div>
             </div>
@@ -124,73 +166,44 @@ export default function LandingPage() {
         </div>
       </header>
 
-      {/* PROBLEM — live inference strip with interactive optical resolve canvas */}
+      {/* PROBLEM — Interactive comparison strip */}
       <section id="problem" className="py-14 px-6">
         <div className="max-w-[1100px] mx-auto">
-          <div className="text-[11px] tracking-[.14em] uppercase" style={{ color: "var(--bsr-indigo)" }}>01 · Optical Resolution & The Gap</div>
-          <h2 className="text-2xl my-2 mb-6">Interactive Sensor Focus: 10m &rarr; 2.5m Super-Resolution</h2>
+          <div className="text-[11px] tracking-[.14em] uppercase" style={{ color: "var(--bsr-indigo)" }}>01 · Optical Resolution &amp; The Gap</div>
+          <h2 className="text-2xl my-2 mb-4">Comparative Benchmark Products</h2>
+          <p className="text-sm mb-6 max-w-[700px]" style={{ color: "var(--bsr-ink-dim)" }}>
+            Same Sentinel-2 tile from Karnataka Bellary mining region, processed through four perspectives.
+            Hover each panel to see the full-frame pixel dissolve — raw sensor blocks resolve into analytical clarity.
+          </p>
 
-          {/* Interactive Optical Pixel Resolve Canvas */}
-          <div className="flex flex-col lg:flex-row items-center gap-6 mb-8 p-5 rounded-xl border border-zinc-800 bg-zinc-950/80 backdrop-blur-md shadow-2xl">
-            <div className="w-full lg:w-1/2 aspect-square max-w-[440px] shrink-0">
-              <PixelResolveCanvas
-                src={preview?.views.sr || "/satellite_demo.png"}
-                alt="Interactive Optical Resolving Lens"
-                className="w-full h-full shadow-2xl"
-                overlayLabel="Hover cursor / drag touch to focus 10m sensor pixels into 2.5m analytical clarity"
-              />
-            </div>
-            <div className="w-full lg:w-1/2 flex flex-col justify-center gap-3">
-              <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs font-mono w-fit">
-                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-                Live Optical Sensor Demonstration
-              </div>
-              <h3 className="text-lg sm:text-xl font-bold font-mono tracking-tight text-zinc-100">
-                Sharpen Raw Sentinel-2 Imagery by Moving Across the Tile
-              </h3>
-              <p className="text-xs text-zinc-400 leading-relaxed font-sans">
-                At 10m Ground Sampling Distance (GSD), small agricultural parcels, canal paths, and urban peripheries merge into indistinct pixel blocks. As your cursor moves across the sensor grid, BharatSR&apos;s physical super-resolution reconstructs high-frequency spatial boundaries while preserving exact Bottom-of-Atmosphere (BOA) surface reflectance.
-              </p>
-              <div className="grid grid-cols-2 gap-2.5 pt-2 text-xs font-mono">
-                <div className="p-2.5 rounded-lg bg-zinc-900/80 border border-zinc-800">
-                  <div className="text-[10px] text-zinc-500">RAW RESOLUTION</div>
-                  <div className="text-amber-400 font-semibold mt-0.5">10.0m Native S2</div>
-                </div>
-                <div className="p-2.5 rounded-lg bg-zinc-900/80 border border-zinc-800">
-                  <div className="text-[10px] text-zinc-500">RESOLVED GRID</div>
-                  <div className="text-cyan-400 font-semibold mt-0.5">2.5m Analysis Equivalent</div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="text-xs font-mono uppercase tracking-wider text-zinc-400 mb-3">
-            Comparative Benchmark Products (Same Tile, Four Perspectives)
-          </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
             {panels.map((p) => (
               <div key={p.tag} className="rounded-[10px] overflow-hidden border" style={{ background: "var(--bsr-panel)", borderColor: "var(--bsr-line)" }}>
-                <div className="relative aspect-square" style={{ background: "linear-gradient(135deg,#1a2e1f 0%,#243a24 30%,#2f2417 55%,#233246 80%)" }}>
-                  {p.src ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={p.src} alt={p.caption} className="w-full h-full object-cover" style={{ imageRendering: "pixelated" }} />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-[10px]" style={{ color: "var(--bsr-ink-dim)" }}>
-                      {previewError ? "backend offline" : "loading live inference…"}
-                    </div>
-                  )}
-                  <span className="absolute top-2 left-2 text-[9px] px-1.5 py-1 rounded"
+                <div className="relative">
+                  <PixelDissolve
+                    src={p.src}
+                    alt={p.caption}
+                    className="w-full"
+                    pixelSize={16}
+                    duration={600}
+                    trigger="hover"
+                    label=""
+                  />
+                  <span className="absolute top-2 left-2 text-xs px-2 py-0.5 rounded font-mono font-medium z-10"
                         style={{
-                          background: "rgba(0,0,0,.55)",
+                          background: "rgba(0,0,0,.65)",
                           border: `1px solid ${p.hi ? "rgba(255,180,84,.5)" : "var(--bsr-line)"}`,
                           color: p.hi ? "var(--bsr-signal)" : "var(--bsr-ink-dim)",
                         }}>
                     {p.tag}
                   </span>
                 </div>
-                <div className="px-3 py-2.5 text-[11px] flex justify-between border-t" style={{ borderColor: "var(--bsr-line)", color: "var(--bsr-ink-dim)" }}>
-                  <span>{p.caption}</span>
-                  <b style={{ color: "var(--bsr-ink)" }}>{p.sub}</b>
+                <div className="px-3 py-2.5 text-xs border-t font-mono" style={{ borderColor: "var(--bsr-line)", color: "var(--bsr-ink-dim)" }}>
+                  <div className="flex justify-between">
+                    <span>{p.caption}</span>
+                    <b style={{ color: "var(--bsr-ink)" }}>{p.sub}</b>
+                  </div>
+                  <div className="text-[10px] text-zinc-500 mt-0.5">{p.detail}</div>
                 </div>
               </div>
             ))}

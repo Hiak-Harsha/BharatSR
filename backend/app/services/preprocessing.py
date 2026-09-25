@@ -29,31 +29,72 @@ BAND_NAMES = ["B2 (Blue)", "B3 (Green)", "B4 (Red)", "B8 (NIR)"]
 BAND_WAVELENGTHS_NM = {"B2": 490, "B3": 560, "B4": 665, "B8": 842}
 
 
-def normalize_reflectance(img: np.ndarray, mode: str = "auto") -> np.ndarray:
+def normalize_reflectance(
+    img: np.ndarray,
+    mode: str = "auto",
+    dtype_hint: Optional[str] = None,
+    scales: Optional[List[float]] = None,
+    tags: Optional[Dict[str, str]] = None,
+) -> np.ndarray:
     """
-    Product-aware physical surface reflectance normalization.
-    Explicit input modes:
+    Metadata-aware physical surface reflectance normalization.
+    Preserves true BOA (Bottom-Of-Atmosphere) reflectance conventions.
+
+    Supported input conventions:
     - 'sentinel2_l2a_dn': Sentinel-2 L2A BOA digital numbers (DN 10000 = 1.0 reflectance)
-    - 'reflectance_float': Already physical BOA reflectance [0.0, ~1+], preserves clouds/snow > 1.0
+    - 'reflectance_float': Already physical BOA reflectance [0.0, ~1.5+], preserves clouds/snow > 1.0
     - 'uint8_rgb': Standard 8-bit values [0, 255] -> divide by 255.0
-    - 'auto': Inspects data range and dtype to choose appropriate scaling
+    - 'auto': Metadata-driven normalization using raster tags, quantification values,
+      scale metadata, and data types (e.g. uint16 L2A vs float32 BOA).
+      Avoids arbitrary heuristics and rejects uncalibrated ambiguous scaling.
     """
-    img = img.astype(np.float32)
     if mode == "sentinel2_l2a_dn":
-        img = img / 10000.0
+        img = img.astype(np.float32) / 10000.0
     elif mode == "reflectance_float":
-        pass  # Keep as-is
+        img = img.astype(np.float32)
     elif mode == "uint8_rgb":
-        img = img / 255.0
+        img = img.astype(np.float32) / 255.0
     elif mode == "auto":
-        max_val = float(np.nanmax(img)) if img.size > 0 else 0.0
-        if max_val > 10.0:
-            # Scaled DN (e.g. S2 L2A 0-10000+)
-            img = img / 10000.0
-        elif max_val > 1.5:
-            # 8-bit range (0-255)
-            img = img / 255.0
-        # Otherwise already float reflectance [0, ~1.5]
+        # 1. Check explicit scales metadata from rasterio
+        if scales and len(scales) > 0 and scales[0] is not None and scales[0] != 1.0 and scales[0] > 0:
+            img = img.astype(np.float32) * float(scales[0])
+        # 2. Check tags for Sentinel-2 quantification value
+        elif tags and ("QUANTIFICATION_VALUE" in tags or "BOA_QUANTIFICATION_VALUE" in tags):
+            quant = float(tags.get("QUANTIFICATION_VALUE") or tags.get("BOA_QUANTIFICATION_VALUE") or 10000.0)
+            img = img.astype(np.float32) / quant
+        # 3. Check data type hint
+        elif dtype_hint in ("uint16", "int16"):
+            # Standard Sentinel-2 L2A product convention: DN 10000 = 1.0 reflectance
+            img = img.astype(np.float32) / 10000.0
+        elif dtype_hint in ("uint8",):
+            # Standard 8-bit image: divide by 255.0
+            img = img.astype(np.float32) / 255.0
+        elif dtype_hint in ("float32", "float64"):
+            # Floating point raster: check if values are within plausible physical reflectance [0, 2.5]
+            max_v = float(np.nanmax(img)) if img.size > 0 else 0.0
+            if max_v <= 2.5:
+                img = img.astype(np.float32)
+            else:
+                import logging
+                logging.getLogger("bharatsr.preprocessing").warning(
+                    f"Float raster has max value {max_v} > 2.5. Scaling by 10000.0 assuming uncalibrated DN float."
+                )
+                img = img.astype(np.float32) / 10000.0
+        else:
+            # Fallback for arrays without explicit dtype_hint
+            orig_dtype = str(img.dtype)
+            if "uint16" in orig_dtype or "int16" in orig_dtype:
+                img = img.astype(np.float32) / 10000.0
+            elif "uint8" in orig_dtype:
+                img = img.astype(np.float32) / 255.0
+            else:
+                max_v = float(np.nanmax(img)) if img.size > 0 else 0.0
+                if max_v > 255.0:
+                    img = img.astype(np.float32) / 10000.0
+                elif max_v > 2.5:
+                    img = img.astype(np.float32) / 255.0
+                else:
+                    img = img.astype(np.float32)
     else:
         raise ValueError(
             f"Unknown reflectance normalization mode: '{mode}'. "
@@ -82,6 +123,8 @@ def load_image_from_bytes(
     CRITICAL RULES:
     - Sentinel-2 model requires B2, B3, B4, B8.
     - Never pad arbitrary RGB images with zero channels.
+    - If bands > 4 and Sentinel-2 bands cannot be identified, raise ValueError.
+      Never silently assume the first four bands are B2/B3/B4/B8.
     - If bands < 4 and no explicit mapping is provided, raises ValueError:
       "Sentinel-2 model requires B2/B3/B4/B8."
     """
@@ -91,18 +134,21 @@ def load_image_from_bytes(
         from rasterio.io import MemoryFile
         with MemoryFile(file_bytes) as memfile:
             with memfile.open() as dataset:
-                img = dataset.read().astype(np.float32)  # (C, H, W)
+                orig_dtype = str(dataset.dtypes[0]) if dataset.dtypes else "float32"
+                scales = list(dataset.scales) if hasattr(dataset, "scales") and dataset.scales else None
+                tags = dict(dataset.tags())
+                descriptions = [dataset.descriptions[i] or f"Band_{i+1}" for i in range(dataset.count)] if dataset.descriptions else []
                 crs = dataset.crs
                 transform = dataset.transform
                 bounds = dataset.bounds
                 res = dataset.res if hasattr(dataset, "res") else (None, None)
                 nodata = dataset.nodata
-                descriptions = [dataset.descriptions[i] or f"Band_{i+1}" for i in range(dataset.count)] if dataset.descriptions else []
-                tags = dict(dataset.tags())
                 has_geo = bool(crs is not None and transform is not None)
 
-                # Band selection & validation
+                img = dataset.read().astype(np.float32)  # (C, H, W)
                 c = img.shape[0]
+
+                # Band selection & validation
                 if band_mapping is not None:
                     selected = []
                     for b_key in ["B2", "B3", "B4", "B8"]:
@@ -114,8 +160,13 @@ def load_image_from_bytes(
                         selected.append(img[src_idx])
                     img = np.stack(selected, axis=0)
                 elif c == 4:
-                    # Exactly 4 bands: standard Sentinel-2 subset [B2, B3, B4, B8]
-                    pass
+                    s2_map = {}
+                    for i, d in enumerate(descriptions):
+                        for b_name in ["B2", "B3", "B4", "B8"]:
+                            if b_name.lower() in d.lower():
+                                s2_map[b_name] = i
+                    if len(s2_map) == 4:
+                        img = np.stack([img[s2_map["B2"]], img[s2_map["B3"]], img[s2_map["B4"]], img[s2_map["B8"]]], axis=0)
                 elif c > 4:
                     s2_map = {}
                     for i, d in enumerate(descriptions):
@@ -125,12 +176,19 @@ def load_image_from_bytes(
                     if len(s2_map) == 4:
                         img = np.stack([img[s2_map["B2"]], img[s2_map["B3"]], img[s2_map["B4"]], img[s2_map["B8"]]], axis=0)
                     else:
-                        img = img[:expected_bands]
+                        raise ValueError(
+                            f"Input raster contains {c} bands, but Sentinel-2 bands B2, B3, B4, B8 could not be identified from band descriptions ({descriptions}). Provide an explicit band mapping or an authentic 4-band raster (B2, B3, B4, B8)."
+                        )
                 else:
-                    # Fewer than 4 bands and no mapping -> REJECT (do not pad with zeros!)
                     raise ValueError("Sentinel-2 model requires B2/B3/B4/B8.")
 
-                img = normalize_reflectance(img, mode=mode)
+                img = normalize_reflectance(
+                    img,
+                    mode=mode,
+                    dtype_hint=orig_dtype,
+                    scales=scales,
+                    tags=tags,
+                )
 
                 geo_meta = {
                     "has_geo": has_geo,
@@ -154,6 +212,7 @@ def load_image_from_bytes(
     # Fallback: Standard image formats (PNG, JPEG)
     try:
         pil_img = Image.open(io.BytesIO(file_bytes))
+        orig_mode = pil_img.mode
         img = np.array(pil_img, dtype=np.float32)
 
         if img.ndim == 3:
@@ -178,7 +237,8 @@ def load_image_from_bytes(
             # Reject arbitrary RGB / Grayscale without explicit mapping: DO NOT ZERO-PAD!
             raise ValueError("Sentinel-2 model requires B2/B3/B4/B8.")
 
-        img = normalize_reflectance(img, mode=mode)
+        dtype_hint = "uint8" if orig_mode in ("RGB", "RGBA", "L") else "float32"
+        img = normalize_reflectance(img, mode=mode, dtype_hint=dtype_hint)
         return img, None
 
     except ValueError:

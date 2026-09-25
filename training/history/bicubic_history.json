@@ -1,0 +1,20 @@
+{
+  "model_name": "bicubic",
+  "config_name": "A_Bicubic",
+  "architecture": "Bicubic Interpolation (Deterministic baseline)",
+  "num_parameters": 0,
+  "train_history": [],
+  "final_metrics": {
+    "psnr_db": 32.14,
+    "ssim": 0.7486,
+    "sam_degrees": 3.5493,
+    "downsample_consistency_mae": 0.0032,
+    "spectral_mae": 0.0174,
+    "gradient_similarity": 0.7693,
+    "false_edge_rate": 0.1394,
+    "missing_edge_rate": 0.9767,
+    "high_frequency_excess_rate": 0.0366,
+    "correctness_score": 0.8058
+  },
+  "is_final_only": true
+}

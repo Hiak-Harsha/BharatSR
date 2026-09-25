@@ -70,9 +70,9 @@ export function ImageComparisonSlider({
     ...(beforeSrc ? [{ id: "lr", label: beforeLabel, tag: "10m Raw", image: beforeSrc, views: beforeViews }] : []),
     ...(bicubicSrc ? [{ id: "bicubic", label: "Bicubic Interpolation", tag: "Baseline", image: bicubicSrc, views: bicubicViews }] : []),
     ...(afterSrc ? [{ id: "sr", label: afterLabel, tag: "BharatSR", image: afterSrc, views: afterViews }] : []),
-    ...(groundTruthSrc ? [{ id: "gt", label: "Ground Truth", tag: "Reference", image: groundTruthSrc, views: groundTruthViews, isGroundTruth: true }] : []),
-    ...(uncertaintySrc ? [{ id: "uncertainty", label: "Heteroscedastic Uncertainty", tag: "σ Heatmap", image: uncertaintySrc }] : []),
-    ...(errorMapSrc ? [{ id: "error", label: "Absolute Error |SR - GT|", tag: "L1 Error", image: errorMapSrc }] : []),
+    ...(groundTruthSrc ? [{ id: "gt", label: "Reference Target", tag: "Demonstration Reference", image: groundTruthSrc, views: groundTruthViews, isGroundTruth: true }] : []),
+    ...(uncertaintySrc ? [{ id: "uncertainty", label: "Predicted Uncertainty", tag: "Predicted σ", image: uncertaintySrc }] : []),
+    ...(errorMapSrc ? [{ id: "error", label: "Absolute Deviation |SR - Reference|", tag: "L1 Deviation", image: errorMapSrc }] : []),
   ];
 
   const defaultLeft = initialLeftId || layers[0]?.id || "lr";

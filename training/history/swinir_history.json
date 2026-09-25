@@ -1,0 +1,15 @@
+{
+  "model_name": "swinir",
+  "config_name": "Production_SWINIR",
+  "architecture": "Pre-trained SWINIR Satellite Backbone (Transformer)",
+  "num_parameters": 1567089,
+  "train_history": [],
+  "final_metrics": {
+    "psnr_db": 32.71,
+    "ssim": 0.7584,
+    "sam_degrees": 3.41,
+    "downsample_consistency_mae": 0.001,
+    "spectral_mae": 0.0162
+  },
+  "is_final_only": true
+}

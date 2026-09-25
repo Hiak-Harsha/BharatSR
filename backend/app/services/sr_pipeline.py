@@ -10,7 +10,7 @@ import base64
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 
 import numpy as np
 from PIL import Image
@@ -262,6 +262,12 @@ def async_worker(
             geo_json=json.dumps(geo_metadata) if geo_metadata else "",
             model_id=model_id,
             scale_factor=4,
+            quality=quality,
+            metrics_json=json.dumps(result.metrics),
+            uncertainty_json=json.dumps(result.response_dict.get("uncertainty") or {}),
+            inference_time_s=float(result.latency),
+            created_at=datetime.now(timezone.utc).isoformat(),
+            sample_id=sample_id or "",
         )
 
         job_store.update_job(

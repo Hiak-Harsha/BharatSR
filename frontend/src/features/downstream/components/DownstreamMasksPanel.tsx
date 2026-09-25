@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { useDownstreamMasks } from "../hooks/useDownstreamMasks";
 import { useConsoleStore } from "@/lib/store";
-import { Target, Play, Activity, AlertCircle, Layers, CheckCircle2, TrendingUp, Info } from "lucide-react";
+import { Target, Play, Activity, AlertCircle, Layers, CheckCircle2, TrendingUp, Info, ShieldAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function DownstreamMasksPanel({ className }: { className?: string }) {
@@ -20,10 +20,10 @@ export function DownstreamMasksPanel({ className }: { className?: string }) {
     refetch,
     error,
   } = useDownstreamMasks(
-    selectedSample || "sample_1",
+    currentRunId ? undefined : (selectedSample || undefined),
     currentRunId || undefined,
     selectedModel,
-    true
+    Boolean(currentRunId || selectedSample)
   );
 
   const tasks = downstreamData?.tasks || {};
@@ -36,16 +36,18 @@ export function DownstreamMasksPanel({ className }: { className?: string }) {
         <div>
           <h2 className="font-mono text-base font-bold text-zinc-100 flex items-center gap-2">
             <Target className="w-5 h-5 text-indigo-400" />
-            Downstream Feature Extraction & Segmentation
+            Downstream Consistency Analysis
           </h2>
           <p className="mt-1 font-mono text-xs text-zinc-400">
-            Empirical validation proving 4× super-resolved reflectance improves operational GIS feature extraction
+            {currentRunId
+              ? `Pseudo-label consistency evaluation for run ${currentRunId}`
+              : "Pseudo-label consistency evaluation comparing model outputs against rule-derived reference masks"}
           </p>
         </div>
 
         <button
           type="button"
-          disabled={isLoading}
+          disabled={isLoading || (!currentRunId && !selectedSample)}
           onClick={() => refetch()}
           className={cn(
             "inline-flex items-center gap-2 px-6 py-2.5 rounded-lg font-mono text-xs font-bold tracking-wider uppercase transition shadow-lg",
@@ -57,15 +59,26 @@ export function DownstreamMasksPanel({ className }: { className?: string }) {
           {isLoading ? (
             <>
               <Activity className="w-4 h-4 animate-spin" />
-              Evaluating Downstream Tasks...
+              Evaluating Consistency...
             </>
           ) : (
             <>
               <Play className="w-4 h-4 fill-current" />
-              Re-run Segmentation
+              Compute Downstream Consistency
             </>
           )}
         </button>
+      </div>
+
+      {/* Prominent Mandatory Methodology Disclaimer */}
+      <div className="rounded-lg bg-amber-950/30 border border-amber-800/50 p-3.5 text-xs font-mono text-amber-300 flex items-start gap-2.5">
+        <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+        <div>
+          <span className="font-bold text-amber-200">Pseudo-Label Methodology Notice: </span>
+          <span>
+            These metrics compare model outputs against rule-derived reference masks and are not independent labelled benchmark results.
+          </span>
+        </div>
       </div>
 
       {error && (
@@ -81,8 +94,8 @@ export function DownstreamMasksPanel({ className }: { className?: string }) {
       {isLoading ? (
         <div className="aspect-video w-full rounded-xl border border-zinc-800 bg-zinc-950 flex flex-col items-center justify-center p-8 gap-4">
           <div className="w-12 h-12 rounded-full border-2 border-indigo-500/20 border-t-indigo-400 animate-spin" />
-          <div className="font-mono text-xs text-zinc-400 text-center">
-            Running rule-based canopy extraction and computing IoU/Precision metrics against ground truth...
+          <div className="font-mono text-xs text-zinc-300 text-center">
+            Running rule-based canopy extraction and evaluating pseudo-label consistency...
           </div>
         </div>
       ) : currentTask ? (
@@ -118,7 +131,7 @@ export function DownstreamMasksPanel({ className }: { className?: string }) {
               const delta = rcanPrec - bicPrec;
               return (
                 <div className="p-3.5 rounded-xl border border-zinc-800 bg-zinc-950 font-mono">
-                  <span className="text-zinc-500 text-[10px] block uppercase">Precision Uplift</span>
+                  <span className="text-zinc-400 text-xs block uppercase font-semibold">Precision Uplift</span>
                   <div className="flex items-baseline gap-2 mt-1">
                     <span className="text-emerald-400 font-bold text-lg">
                       {rcanPrec.toFixed(1)}%
@@ -127,8 +140,8 @@ export function DownstreamMasksPanel({ className }: { className?: string }) {
                       {bicPrec.toFixed(1)}%
                     </span>
                   </div>
-                  <span className="text-[10px] text-emerald-400/90 block mt-1 flex items-center gap-1 font-semibold">
-                    <TrendingUp className="w-3 h-3" />
+                  <span className="text-xs text-emerald-400/90 block mt-1 flex items-center gap-1 font-semibold">
+                    <TrendingUp className="w-3.5 h-3.5" />
                     {delta >= 0 ? `+${delta.toFixed(2)}%` : `${delta.toFixed(2)}%`} vs Bicubic
                   </span>
                 </div>
@@ -136,7 +149,7 @@ export function DownstreamMasksPanel({ className }: { className?: string }) {
             })()}
 
             <div className="p-3.5 rounded-xl border border-zinc-800 bg-zinc-950 font-mono">
-              <span className="text-zinc-500 text-[10px] block uppercase">IoU (Intersection/Union)</span>
+              <span className="text-zinc-400 text-xs block uppercase font-semibold">IoU (Intersection/Union)</span>
               <div className="flex items-baseline gap-2 mt-1">
                 <span className="text-indigo-400 font-bold text-lg">
                   {((currentTask.rcan?.iou ?? 0) * 100).toFixed(1)}%
@@ -145,11 +158,11 @@ export function DownstreamMasksPanel({ className }: { className?: string }) {
                   {((currentTask.bicubic?.iou ?? 0) * 100).toFixed(1)}%
                 </span>
               </div>
-              <span className="text-[10px] text-zinc-400 block mt-1">Spatial overlap score</span>
+              <span className="text-xs text-zinc-400 block mt-1">Spatial overlap score</span>
             </div>
 
             <div className="p-3.5 rounded-xl border border-zinc-800 bg-zinc-950 font-mono">
-              <span className="text-zinc-500 text-[10px] block uppercase">F1-Score</span>
+              <span className="text-zinc-400 text-xs block uppercase font-semibold">F1-Score</span>
               <div className="flex items-baseline gap-2 mt-1">
                 <span className="text-cyan-400 font-bold text-lg">
                   {((currentTask.rcan?.f1 ?? 0) * 100).toFixed(1)}%
@@ -158,17 +171,17 @@ export function DownstreamMasksPanel({ className }: { className?: string }) {
                   {((currentTask.bicubic?.f1 ?? 0) * 100).toFixed(1)}%
                 </span>
               </div>
-              <span className="text-[10px] text-zinc-400 block mt-1">Harmonic mean</span>
+              <span className="text-xs text-zinc-400 block mt-1">Harmonic mean</span>
             </div>
 
             <div className="p-3.5 rounded-xl border border-zinc-800 bg-zinc-950 font-mono">
-              <span className="text-zinc-500 text-[10px] block uppercase">Target Verification</span>
-              <div className="flex items-center gap-2 mt-1.5 text-emerald-400 font-bold text-sm">
+              <span className="text-zinc-400 text-xs block uppercase font-semibold">Target Pixels</span>
+              <div className="flex items-center gap-2 mt-1 text-emerald-400 font-bold text-base">
                 <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                Validated
+                <span>{currentTask.ground_truth_pixel_count.toLocaleString()}</span>
               </div>
-              <span className="text-[10px] text-zinc-400 block mt-1">
-                {currentTask.ground_truth_pixel_count.toLocaleString()} GT Pixels
+              <span className="text-xs text-zinc-400 block mt-1">
+                Reference mask pixels
               </span>
             </div>
           </div>
@@ -180,7 +193,7 @@ export function DownstreamMasksPanel({ className }: { className?: string }) {
                 <span className="font-mono text-xs font-semibold text-emerald-400">
                   BharatSR 4× SR Mask
                 </span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/50">
+                <span className="text-xs font-mono px-2 py-0.5 rounded bg-emerald-950/60 text-emerald-300 border border-emerald-800/50">
                   Precision: {((currentTask.rcan?.precision ?? 0) * 100).toFixed(1)}%
                 </span>
               </div>
@@ -204,7 +217,7 @@ export function DownstreamMasksPanel({ className }: { className?: string }) {
                 <span className="font-mono text-xs font-semibold text-zinc-400">
                   Bicubic 4× Baseline Mask
                 </span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-900 text-zinc-400 border border-zinc-800">
+                <span className="text-xs font-mono px-2 py-0.5 rounded bg-zinc-900 text-zinc-400 border border-zinc-800">
                   Precision: {((currentTask.bicubic?.precision ?? 0) * 100).toFixed(1)}%
                 </span>
               </div>
@@ -226,9 +239,9 @@ export function DownstreamMasksPanel({ className }: { className?: string }) {
             <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-3 flex flex-col gap-2">
               <div className="flex items-center justify-between">
                 <span className="font-mono text-xs font-semibold text-indigo-400">
-                  Ground Truth Mask (Reference)
+                  Rule-Derived Reference Mask
                 </span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-950/60 text-indigo-300 border border-indigo-800/50">
+                <span className="text-xs font-mono px-2 py-0.5 rounded bg-indigo-950/60 text-indigo-300 border border-indigo-800/50">
                   Target: 100%
                 </span>
               </div>
@@ -236,12 +249,12 @@ export function DownstreamMasksPanel({ className }: { className?: string }) {
                 {currentTask.masks?.ground_truth_mask ? (
                   <img
                     src={currentTask.masks.ground_truth_mask}
-                    alt="Ground Truth Mask"
+                    alt="Reference Mask"
                     className="w-full h-full object-contain"
                   />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center text-xs text-zinc-600 font-mono">
-                    Ground Truth not available
+                    Reference not available
                   </div>
                 )}
               </div>
@@ -260,9 +273,19 @@ export function DownstreamMasksPanel({ className }: { className?: string }) {
           </div>
         </div>
       ) : (
-        <div className="p-12 rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 text-center font-mono text-xs text-zinc-500 flex flex-col items-center gap-3">
-          <Target className="w-8 h-8 text-zinc-700" />
-          <span>Click "Re-run Segmentation" to evaluate downstream feature extraction masks.</span>
+        <div className="p-12 rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 text-center font-mono text-xs text-zinc-400 flex flex-col items-center gap-3">
+          <Target className="w-8 h-8 text-zinc-600" />
+          <span className="text-zinc-300 font-medium">
+            No downstream consistency analysis has been generated for the current run.
+          </span>
+          <button
+            type="button"
+            onClick={() => refetch()}
+            disabled={!currentRunId && !selectedSample}
+            className="mt-2 px-4 py-2 rounded bg-indigo-500 hover:bg-indigo-400 text-zinc-950 font-bold transition"
+          >
+            Compute Downstream Consistency
+          </button>
         </div>
       )}
     </div>

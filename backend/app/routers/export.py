@@ -107,7 +107,8 @@ def export_geotiff(
 
 @router.get("/api/export/report", response_model=ReportResponse)
 def export_report(
-    sample_id: str = Query(..., description="Sample ID"),
+    sample_id: Optional[str] = Query(None, description="Sample ID"),
+    run_id: Optional[str] = Query(None, description="Active run ID to export without rerunning"),
     model_id: str = Query("rcan", description="Model ID"),
     settings: Settings = Depends(get_settings),
     registry: ModelRegistry = Depends(get_model_registry),
@@ -115,7 +116,87 @@ def export_report(
     """
     Generate an analytical verification report JSON for SIH evaluation.
     Reports scientifically defensible metrics without fabricated claims.
+    Supports either an active run_id (priority, never reruns inference)
+    or sample_id (runs inference if no run artifact is provided).
     """
+    if not sample_id and not run_id:
+        raise HTTPException(status_code=400, detail="Provide either 'run_id' or 'sample_id'")
+
+    runs_dir = Path(settings.runs_dir)
+
+    if run_id:
+        run_path = runs_dir / f"{run_id}.npz"
+        if not run_path.exists():
+            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+
+        data = np.load(str(run_path), allow_pickle=True)
+        m_id = str(data.get("model_id", model_id))
+        scale_factor = int(data.get("scale_factor", 4))
+        geo_json = str(data.get("geo_json", ""))
+        geo_metadata = json.loads(geo_json) if geo_json else None
+
+        # Load exact stored metrics without rerunning inference
+        metrics_raw = str(data.get("metrics_json", ""))
+        metrics = json.loads(metrics_raw) if metrics_raw else {}
+
+        uncertainty_raw = str(data.get("uncertainty_json", ""))
+        uncertainty = json.loads(uncertainty_raw) if uncertainty_raw else None
+
+        latency_seconds = float(data.get("inference_time_s", 0.0))
+        quality = str(data.get("quality", "fast"))
+        created_at = str(data.get("created_at", ""))
+        sid = str(data.get("sample_id", "")) or sample_id
+
+        lr_shape = list(data["lr"].shape) if "lr" in data else []
+        sr_shape = list(data["sr"].shape) if "sr" in data else []
+        has_hr = bool(data.get("has_hr", False))
+
+        # Legacy fallback if metrics_json was omitted in an older run
+        if not metrics and "sr" in data and "lr" in data:
+            hr_arr = data["hr"] if (has_hr and "hr" in data and data["hr"].size > 0) else None
+            from backend.app.services.metrics import compute_inference_metrics
+            metrics = compute_inference_metrics(
+                sr=data["sr"].astype(np.float32),
+                hr=hr_arr.astype(np.float32) if hr_arr is not None else None,
+                lr_original=data["lr"].astype(np.float32),
+                scale_factor=scale_factor,
+            )
+
+        u_summary = (
+            uncertainty.get("summary")
+            if (isinstance(uncertainty, dict) and "summary" in uncertainty)
+            else uncertainty
+        )
+
+        report = {
+            "title": "BharatSR Super-Resolution Physics & Spectral Fidelity Report",
+            "problem_statement": "SIH26142 - Deep Learning Super-Resolution Mapping for Medium-Resolution Satellite Imagery",
+            "target_organization": "National Technical Research Organisation (NTRO)",
+            "sample_id": sid,
+            "run_id": run_id,
+            "model_id": m_id,
+            "quality": quality,
+            "scale_factor": f"{scale_factor}x (10m -> 2.5m-equivalent output grid)",
+            "input_dimension": lr_shape,
+            "output_dimension": sr_shape,
+            "latency_seconds": latency_seconds,
+            "metrics": metrics,
+            "uncertainty_summary": u_summary,
+            "geospatial_metadata": geo_metadata,
+            "created_at": created_at,
+            "spectral_integrity_compliance": {
+                "physical_reflectance_preserved": True,
+                "sam_evaluation_target_met": (metrics.get("sam", {}).get("value", 99) < 5.0)
+                if (has_hr and "sam" in metrics)
+                else None,
+                "downsample_consistency_mae": metrics.get("downsample_consistency", {}).get("value")
+                if "downsample_consistency" in metrics
+                else None,
+                "target_note": "Internal evaluation target: SAM < 5.0° (not an NTRO mandated threshold).",
+            },
+        }
+        return JSONResponse(content=report)
+
     sample_tiles_dir = Path(settings.sample_tiles_dir)
     sample_path = sample_tiles_dir / f"{sample_id}.npz"
     if not sample_path.exists():
@@ -133,6 +214,7 @@ def export_report(
         "problem_statement": "SIH26142 - Deep Learning Super-Resolution Mapping for Medium-Resolution Satellite Imagery",
         "target_organization": "National Technical Research Organisation (NTRO)",
         "sample_id": sample_id,
+        "run_id": None,
         "model_id": model_id,
         "scale_factor": f"{scale_factor}x (10m -> 2.5m-equivalent output grid)",
         "input_dimension": list(lr_image.shape),

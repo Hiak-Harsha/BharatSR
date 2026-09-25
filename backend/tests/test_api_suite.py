@@ -154,7 +154,7 @@ def test_endpoint_export_geotiff_success_for_real_sentinel2(client):
 
 
 def test_endpoint_export_report(client):
-    """GET /api/export/report"""
+    """GET /api/export/report with sample_id"""
     resp = client.get("/api/export/report?sample_id=sample_real_s2&model_id=rcan")
     assert resp.status_code == 200
     data = resp.json()
@@ -163,6 +163,33 @@ def test_endpoint_export_report(client):
     assert data["problem_statement"] == "SIH26142 - Deep Learning Super-Resolution Mapping for Medium-Resolution Satellite Imagery"
     assert "metrics" in data
     assert "spectral_integrity_compliance" in data
+
+
+def test_endpoint_export_report_with_run_id(client):
+    """
+    Integration test proving:
+    superresolve -> run_id -> export/report?run_id=... -> HTTP 200 without rerun.
+    """
+    sr_resp = client.post(
+        "/api/superresolve",
+        data={"sample_id": "sample_real_s2", "model_id": "rcan", "quality": "fast"},
+    )
+    assert sr_resp.status_code == 200
+    sr_data = sr_resp.json()
+    assert "run_id" in sr_data
+    run_id = sr_data["run_id"]
+    assert run_id.startswith("run_")
+
+    # Fetch analytical report using the exact run_id
+    report_resp = client.get(f"/api/export/report?run_id={run_id}&model_id=rcan")
+    assert report_resp.status_code == 200
+    rep_data = report_resp.json()
+    assert rep_data["run_id"] == run_id
+    assert rep_data["model_id"] == "rcan"
+    assert "metrics" in rep_data
+    assert "spectral_integrity_compliance" in rep_data
+    assert "input_dimension" in rep_data
+    assert "output_dimension" in rep_data
 
 
 def test_endpoint_downstream_masks(client):

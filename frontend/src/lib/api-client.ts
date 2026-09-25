@@ -31,6 +31,14 @@ export type HealthResponse = components["schemas"]["HealthResponse"];
 export type ReportResponse = components["schemas"]["ReportResponse"];
 export type ModelReloadResponse = components["schemas"]["ModelReloadResponse"];
 export type AsyncJobSubmitResponse = components["schemas"]["AsyncJobSubmitResponse"];
+export type DatasetSummaryResponse = components["schemas"]["DatasetSummaryResponse"];
+export type DatasetScenesResponse = components["schemas"]["DatasetScenesResponse"];
+export type SceneRecord = components["schemas"]["SceneRecord"];
+export type PreprocessingSampleResponse = components["schemas"]["PreprocessingSampleResponse"];
+export type PreprocessingStageInfo = components["schemas"]["PreprocessingStageInfo"];
+export type TrainingHistoryResponse = components["schemas"]["TrainingHistoryResponse"];
+export type ModelCardResponse = components["schemas"]["ModelCardResponse"];
+export type EpochMetric = components["schemas"]["EpochMetric"];
 
 export interface MultiSpectralViews {
   composite?: string;
@@ -65,21 +73,97 @@ export interface SamplePreviewResponse {
   };
 }
 
+export interface NormalizedApiError {
+  status: number;
+  message: string;
+  actionToFix: string;
+  requestId?: string;
+  endpoint: string;
+  technicalDetails: string;
+  validationErrors?: string[];
+}
+
 export class ApiError extends Error {
   status: number;
   detail: string;
+  actionToFix: string;
+  requestId?: string;
+  endpoint: string;
+  validationErrors?: string[];
 
-  constructor(status: number, detail: string) {
-    super(`API Error ${status}: ${detail}`);
+  constructor(normalized: NormalizedApiError) {
+    super(normalized.message);
     this.name = "ApiError";
-    this.status = status;
-    this.detail = detail;
+    this.status = normalized.status;
+    this.detail = normalized.message;
+    this.actionToFix = normalized.actionToFix;
+    this.requestId = normalized.requestId;
+    this.endpoint = normalized.endpoint;
+    this.validationErrors = normalized.validationErrors;
   }
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+export interface RequestOptions extends RequestInit {
+  timeoutMs?: number;
+}
+
+function normalizeErrorResponse(
+  status: number,
+  body: any,
+  endpoint: string,
+  requestId?: string
+): ApiError {
+  let message = "An unexpected error occurred.";
+  let actionToFix = "Retry the operation or contact technical support.";
+  let validationErrors: string[] | undefined = undefined;
+
+  if (status === 422 && body?.detail && Array.isArray(body.detail)) {
+    const errors: string[] = body.detail.map((err: any) => {
+      const field = Array.isArray(err.loc) ? err.loc.slice(1).join(".") : (err.loc || "Input");
+      return `• ${field}: ${err.msg || "Invalid format"}`;
+    });
+    validationErrors = errors;
+    message = `Input validation failed:\n${errors.join("\n")}`;
+    actionToFix = "Ensure the uploaded Sentinel-2 GeoTIFF has all required bands (B2, B3, B4, B8) and valid georeferencing metadata.";
+  } else if (status === 400) {
+    message = body?.detail || body?.error || "Bad Request";
+    if (message.includes("No geospatial reference")) {
+      actionToFix = "GeoTIFF export requires georeferenced raster input. Synthetic benchmarks lack authentic CRS headers.";
+    } else if (message.includes("Sentinel-2 model requires")) {
+      actionToFix = "Provide a 4-band raster (B2 Blue, B3 Green, B4 Red, B8 NIR) or configure an explicit band mapping.";
+    } else {
+      actionToFix = "Review the selected options or verify input raster dimensions and format.";
+    }
+  } else if (status === 404) {
+    message = body?.detail || body?.error || "Resource Not Found";
+    actionToFix = "The requested scene, model, or run does not exist. Select an active run or available scene.";
+  } else if (status === 408) {
+    message = body?.detail || "Request timed out.";
+    actionToFix = "Check the Jobs panel if this operation was submitted asynchronously, or select Fast quality mode.";
+  } else if (status >= 500) {
+    message = body?.detail || body?.error || "Internal Server Error";
+    actionToFix = "The backend inference worker encountered an unexpected failure. Check server logs or retry with CPU mode.";
+  } else if (body?.detail || body?.error) {
+    message = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail || body.error);
+  }
+
+  const technicalDetails = `Status: ${status} | Endpoint: ${endpoint} | Request ID: ${requestId || "N/A"}`;
+
+  return new ApiError({
+    status,
+    message,
+    actionToFix,
+    requestId,
+    endpoint,
+    technicalDetails,
+    validationErrors,
+  });
+}
+
+async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const url = `${getApiBase()}${path}`;
   const headers = new Headers(options.headers || {});
+  const timeoutMs = options.timeoutMs || 30000;
 
   // Inject API key if configured
   if (typeof window !== "undefined") {
@@ -89,23 +173,61 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     }
   }
 
-  const res = await fetch(url, {
-    ...options,
-    headers,
-  });
+  // Setup AbortController for category-specific timeouts
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
 
-  if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const body = await res.json();
-      detail = body.detail || body.error || JSON.stringify(body);
-    } catch {
-      // ignore json parse error
-    }
-    throw new ApiError(res.status, detail);
+  // If consumer passed an external signal, chain it
+  if (options.signal) {
+    options.signal.addEventListener("abort", () => controller.abort());
   }
 
-  return res.json();
+  try {
+    const res = await fetch(url, {
+      ...options,
+      headers,
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    const requestId = res.headers.get("X-Request-ID") || undefined;
+
+    if (!res.ok) {
+      let body: any = null;
+      try {
+        body = await res.json();
+      } catch {
+        body = { detail: res.statusText };
+      }
+      throw normalizeErrorResponse(res.status, body, path, requestId);
+    }
+
+    return await res.json();
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    if (err instanceof ApiError) {
+      throw err;
+    }
+    if (err.name === "AbortError") {
+      throw new ApiError({
+        status: 408,
+        message: "Request timed out. Check the Jobs panel if this operation was submitted asynchronously.",
+        actionToFix: "Try running in Fast mode or submit as an asynchronous batch job.",
+        endpoint: path,
+        technicalDetails: `Timeout: ${timeoutMs}ms exceeded on ${path}`,
+      });
+    }
+    throw new ApiError({
+      status: 0,
+      message: err.message || "Network connection failure.",
+      actionToFix: "Verify that the BharatSR FastAPI backend is running and reachable.",
+      endpoint: path,
+      technicalDetails: String(err),
+    });
+  }
 }
 
 // -------------------------------------------------------------
@@ -113,11 +235,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 // -------------------------------------------------------------
 
 export async function fetchHealth(): Promise<HealthResponse> {
-  return request<HealthResponse>("/api/health", { cache: "no-store" });
+  return request<HealthResponse>("/api/health", { cache: "no-store", timeoutMs: 10000 });
 }
 
 export async function fetchModels(): Promise<ModelInfo[]> {
-  const data = await request<components["schemas"]["ModelsListResponse"]>("/api/models", { cache: "no-store" });
+  const data = await request<components["schemas"]["ModelsListResponse"]>("/api/models", { cache: "no-store", timeoutMs: 10000 });
   return data.models;
 }
 
@@ -128,6 +250,7 @@ export async function reloadModel(modelId: string, checkpointPath?: string): Pro
   return request<ModelReloadResponse>("/api/models/reload", {
     method: "POST",
     body: form,
+    timeoutMs: 30000,
   });
 }
 
@@ -136,14 +259,14 @@ export async function reloadModel(modelId: string, checkpointPath?: string): Pro
 // -------------------------------------------------------------
 
 export async function fetchSamples(): Promise<SampleInfo[]> {
-  const data = await request<components["schemas"]["SamplesListResponse"]>("/api/samples", { cache: "no-store" });
+  const data = await request<components["schemas"]["SamplesListResponse"]>("/api/samples", { cache: "no-store", timeoutMs: 10000 });
   return data.samples;
 }
 
 export async function getSamplePreview(sampleId: string, crop: number = 32): Promise<SamplePreviewResponse> {
   return request<SamplePreviewResponse>(
     `/api/samples/${encodeURIComponent(sampleId)}/preview?crop=${crop}`,
-    { cache: "no-store" }
+    { cache: "no-store", timeoutMs: 15000 }
   );
 }
 
@@ -173,9 +296,13 @@ export async function superresolve({
   form.append("model_id", modelId);
   form.append("quality", quality);
 
+  // High quality 4-way TTA takes longer (up to 5 min timeout)
+  const timeoutMs = quality === "high" ? 300000 : 120000;
+
   return request<SuperResolveResponse>("/api/superresolve", {
     method: "POST",
     body: form,
+    timeoutMs,
   });
 }
 
@@ -197,6 +324,7 @@ export async function submitAsyncSuperresolve({
   return request<AsyncJobSubmitResponse>("/api/superresolve/async", {
     method: "POST",
     body: form,
+    timeoutMs: 15000,
   });
 }
 
@@ -212,6 +340,7 @@ export async function compareModels(sampleId?: string, file?: File): Promise<Com
   return request<CompareResponse>("/api/compare", {
     method: "POST",
     body: form,
+    timeoutMs: 180000, // 3 min for multi-model execution
   });
 }
 
@@ -388,3 +517,43 @@ export function getReportDownloadUrl(sampleId?: string, runId?: string, modelId:
 export function getWebSocketInferenceUrl(jobId: string): string {
   return `${getWsBase()}/ws/inference/${encodeURIComponent(jobId)}`;
 }
+
+// -------------------------------------------------------------
+// Dataset & Training Transparency (Part E)
+// -------------------------------------------------------------
+
+export async function fetchDatasetSummary(): Promise<DatasetSummaryResponse> {
+  return request<DatasetSummaryResponse>("/api/dataset/summary", { cache: "no-store" });
+}
+
+export async function fetchDatasetScenes(
+  split?: "train" | "val" | "test",
+  region?: string,
+  limit: number = 20,
+  offset: number = 0
+): Promise<DatasetScenesResponse> {
+  const params = new URLSearchParams();
+  if (split) params.append("split", split);
+  if (region) params.append("region", region);
+  params.append("limit", String(limit));
+  params.append("offset", String(offset));
+  return request<DatasetScenesResponse>(`/api/dataset/scenes?${params.toString()}`, { cache: "no-store" });
+}
+
+export function getQAReportUrl(split: "train" | "val" | "test"): string {
+  return `${getApiBase()}/api/dataset/qa-report/${encodeURIComponent(split)}`;
+}
+
+export async function fetchPreprocessingSample(sceneId?: string): Promise<PreprocessingSampleResponse> {
+  const query = sceneId ? `?scene_id=${encodeURIComponent(sceneId)}` : "";
+  return request<PreprocessingSampleResponse>(`/api/dataset/preprocessing-sample${query}`, { cache: "no-store" });
+}
+
+export async function fetchTrainingHistory(modelName: string): Promise<TrainingHistoryResponse> {
+  return request<TrainingHistoryResponse>(`/api/training/history/${encodeURIComponent(modelName)}`, { cache: "no-store" });
+}
+
+export async function fetchModelCard(modelName: string): Promise<ModelCardResponse> {
+  return request<ModelCardResponse>(`/api/training/model-card/${encodeURIComponent(modelName)}`, { cache: "no-store" });
+}
+

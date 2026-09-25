@@ -54,7 +54,7 @@ export interface paths {
         /**
          * List Samples
          * @description List pre-loaded sample tiles with honest geographic and provenance metadata.
-         *     Never fabricates coordinates or real city names for synthetic procedural samples.
+         *     Never blocks the main asyncio event loop.
          */
         get: operations["list_samples_api_samples_get"];
         put?: never;
@@ -328,6 +328,8 @@ export interface paths {
          * Export Report
          * @description Generate an analytical verification report JSON for SIH evaluation.
          *     Reports scientifically defensible metrics without fabricated claims.
+         *     Supports either an active run_id (priority, never reruns inference)
+         *     or sample_id (runs inference if no run artifact is provided).
          */
         get: operations["export_report_api_export_report_get"];
         put?: never;
@@ -435,6 +437,130 @@ export interface paths {
          *     Security: checkpoint_path must be strictly within the configured weights directory.
          */
         post: operations["reload_model_api_models_reload_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dataset/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Dataset Summary
+         * @description Return aggregated dataset metrics, split proportions, and spatial coverage.
+         */
+        get: operations["get_dataset_summary_api_dataset_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dataset/scenes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Dataset Scenes
+         * @description Paginated listing of individual scene metadata records.
+         */
+        get: operations["get_dataset_scenes_api_dataset_scenes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dataset/qa-report/{split}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Qa Report
+         * @description Serve the QA verification figure (PNG) for train, val, or test split.
+         */
+        get: operations["get_qa_report_api_dataset_qa_report__split__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/dataset/preprocessing-sample": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Preprocessing Sample
+         * @description Returns step-by-step visual representations of the 4 preprocessing stages:
+         *     1. Raw DN capture
+         *     2. Radiometric BOA Surface Reflectance [0, 1]
+         *     3. Sub-pixel Registration & QA Cleaning
+         *     4. 64x64 LR & 256x256 HR Training Pair
+         */
+        get: operations["get_preprocessing_sample_api_dataset_preprocessing_sample_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/training/history/{model_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Training History
+         * @description Return recorded epoch-by-epoch training metrics or verified final metrics for a model.
+         */
+        get: operations["get_training_history_api_training_history__model_name__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/training/model-card/{model_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Model Card
+         * @description Return architectural model card, parameter specifications, loss config, and benchmark metrics.
+         */
+        get: operations["get_model_card_api_training_model_card__model_name__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -756,6 +882,56 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** DatasetDateRange */
+        DatasetDateRange: {
+            /** Min */
+            min: string;
+            /** Max */
+            max: string;
+        };
+        /** DatasetScenesResponse */
+        DatasetScenesResponse: {
+            /** Total */
+            total: number;
+            /** Offset */
+            offset: number;
+            /** Limit */
+            limit: number;
+            /** Scenes */
+            scenes: components["schemas"]["SceneRecord"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /** DatasetSplitCounts */
+        DatasetSplitCounts: {
+            /** Train */
+            train: number;
+            /** Val */
+            val: number;
+            /** Test */
+            test: number;
+        };
+        /** DatasetSummaryResponse */
+        DatasetSummaryResponse: {
+            /** Total Scenes */
+            total_scenes: number;
+            splits: components["schemas"]["DatasetSplitCounts"];
+            /** Synthetic Count */
+            synthetic_count: number;
+            /** Real Count */
+            real_count: number;
+            /** Regions */
+            regions: string[];
+            /** Sensors */
+            sensors: string[];
+            date_range: components["schemas"]["DatasetDateRange"];
+            /** Mean Cloud Fraction */
+            mean_cloud_fraction: number;
+            /** Mean Registration Rmse */
+            mean_registration_rmse: number;
+        } & {
+            [key: string]: unknown;
+        };
         /** DownstreamMasksResponse */
         DownstreamMasksResponse: {
             /** Status */
@@ -794,6 +970,21 @@ export interface components {
             precision: number;
             /** Recall */
             recall: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /** EpochMetric */
+        EpochMetric: {
+            /** Epoch */
+            epoch: number;
+            /** Loss */
+            loss: number;
+            /** Psnr */
+            psnr?: number | null;
+            /** Ssim */
+            ssim?: number | null;
+            /** Lr */
+            lr?: number | null;
         } & {
             [key: string]: unknown;
         };
@@ -895,6 +1086,29 @@ export interface components {
             result?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /** ModelCardResponse */
+        ModelCardResponse: {
+            /** Model Name */
+            model_name: string;
+            /** Architecture */
+            architecture: string;
+            /** Parameters Count */
+            parameters_count: number;
+            /** Key Design */
+            key_design: string;
+            /** Training Config */
+            training_config: {
+                [key: string]: unknown;
+            };
+            /** Final Metrics */
+            final_metrics: {
+                [key: string]: unknown;
+            };
+            /** Recommended Use */
+            recommended_use: string;
+        } & {
+            [key: string]: unknown;
         };
         /** ModelInfo */
         ModelInfo: {
@@ -1011,6 +1225,32 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** PreprocessingSampleResponse */
+        PreprocessingSampleResponse: {
+            /** Scene Id */
+            scene_id: string;
+            /** Region */
+            region: string;
+            /** Stages */
+            stages: components["schemas"]["PreprocessingStageInfo"][];
+            /** Training Pair */
+            training_pair: {
+                [key: string]: string;
+            };
+        } & {
+            [key: string]: unknown;
+        };
+        /** PreprocessingStageInfo */
+        PreprocessingStageInfo: {
+            /** Stage */
+            stage: string;
+            /** Title */
+            title: string;
+            /** Description */
+            description: string;
+            /** Image */
+            image: string;
+        };
         /** ReportResponse */
         ReportResponse: {
             /** Title */
@@ -1020,7 +1260,9 @@ export interface components {
             /** Target Organization */
             target_organization: string;
             /** Sample Id */
-            sample_id: string;
+            sample_id?: string | null;
+            /** Run Id */
+            run_id?: string | null;
             /** Model Id */
             model_id: string;
             /** Scale Factor */
@@ -1043,6 +1285,16 @@ export interface components {
             spectral_integrity_compliance: {
                 [key: string]: unknown;
             };
+            /** Geospatial Metadata */
+            geospatial_metadata?: {
+                [key: string]: unknown;
+            } | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Quality */
+            quality?: string | null;
+        } & {
+            [key: string]: unknown;
         };
         /** SampleInfo */
         SampleInfo: {
@@ -1066,6 +1318,30 @@ export interface components {
             lr_size: string;
             /** Has Ground Truth */
             has_ground_truth: boolean;
+            /**
+             * Has Reference
+             * @default true
+             */
+            has_reference: boolean;
+            /**
+             * Is Independent Hr
+             * @default false
+             */
+            is_independent_hr: boolean;
+            /**
+             * Reference Type
+             * @default none
+             */
+            reference_type: string;
+            /**
+             * Reference Provenance
+             * @default No reference available
+             */
+            reference_provenance: string;
+            /** Acquisition Date */
+            acquisition_date?: string | null;
+            /** Gsd */
+            gsd?: string | null;
             /** Has Geo */
             has_geo: boolean;
             /** Crs */
@@ -1078,11 +1354,40 @@ export interface components {
             views: {
                 [key: string]: string;
             };
+        } & {
+            [key: string]: unknown;
         };
         /** SamplesListResponse */
         SamplesListResponse: {
             /** Samples */
             samples: components["schemas"]["SampleInfo"][];
+        };
+        /** SceneRecord */
+        SceneRecord: {
+            /** Scene Id */
+            scene_id: string;
+            /** Region */
+            region: string;
+            /** Date */
+            date: string;
+            /** Split */
+            split: string;
+            /** Is Synthetic */
+            is_synthetic: boolean;
+            /** Source Dataset */
+            source_dataset: string;
+            /** Sensor */
+            sensor: string;
+            /** Cloud Fraction */
+            cloud_fraction: number;
+            /** Registration Rmse */
+            registration_rmse: number;
+            /** Crs */
+            crs?: string | null;
+            /** Reflectance Range */
+            reflectance_range?: number[] | null;
+        } & {
+            [key: string]: unknown;
         };
         /** SpectralIndicesResponse */
         SpectralIndicesResponse: {
@@ -1134,6 +1439,23 @@ export interface components {
             geospatial_metadata?: {
                 [key: string]: unknown;
             } | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** TrainingHistoryResponse */
+        TrainingHistoryResponse: {
+            /** Model Name */
+            model_name: string;
+            /** Is Final Only */
+            is_final_only: boolean;
+            /** Epochs */
+            epochs: components["schemas"]["EpochMetric"][];
+            /** Final Metrics */
+            final_metrics: {
+                [key: string]: unknown;
+            };
+            /** Summary Note */
+            summary_note?: string | null;
         } & {
             [key: string]: unknown;
         };
@@ -1637,9 +1959,11 @@ export interface operations {
     };
     export_report_api_export_report_get: {
         parameters: {
-            query: {
+            query?: {
                 /** @description Sample ID */
-                sample_id: string;
+                sample_id?: string | null;
+                /** @description Active run ID to export without rerunning */
+                run_id?: string | null;
                 /** @description Model ID */
                 model_id?: string;
             };
@@ -1823,6 +2147,184 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ModelReloadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_dataset_summary_api_dataset_summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetSummaryResponse"];
+                };
+            };
+        };
+    };
+    get_dataset_scenes_api_dataset_scenes_get: {
+        parameters: {
+            query?: {
+                split?: string | null;
+                region?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetScenesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_qa_report_api_dataset_qa_report__split__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                split: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_preprocessing_sample_api_dataset_preprocessing_sample_get: {
+        parameters: {
+            query?: {
+                scene_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreprocessingSampleResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_training_history_api_training_history__model_name__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingHistoryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_model_card_api_training_model_card__model_name__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                model_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelCardResponse"];
                 };
             };
             /** @description Validation Error */

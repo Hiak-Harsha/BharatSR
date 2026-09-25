@@ -1,0 +1,63 @@
+{
+  "model_name": "rcan",
+  "config_name": "F_RCAN_Full_Uncertainty",
+  "architecture": "Lightweight RCAN-Lite (3 RGs, 3 RCABs, Residual Anchor)",
+  "num_parameters": 456197,
+  "train_history": [
+    {
+      "epoch": 1,
+      "train_loss": -0.2521,
+      "train_l1": 0.0339,
+      "val_loss": -0.5489,
+      "val_l1": 0.0179
+    },
+    {
+      "epoch": 2,
+      "train_loss": -0.5475,
+      "train_l1": 0.0183,
+      "val_loss": -0.5509,
+      "val_l1": 0.0176
+    },
+    {
+      "epoch": 3,
+      "train_loss": -0.5498,
+      "train_l1": 0.0177,
+      "val_loss": -0.5533,
+      "val_l1": 0.0171
+    },
+    {
+      "epoch": 4,
+      "train_loss": -0.5511,
+      "train_l1": 0.0174,
+      "val_loss": -0.5537,
+      "val_l1": 0.017
+    },
+    {
+      "epoch": 5,
+      "train_loss": -0.551,
+      "train_l1": 0.0174,
+      "val_loss": -0.5538,
+      "val_l1": 0.017
+    },
+    {
+      "epoch": 6,
+      "train_loss": -0.5514,
+      "train_l1": 0.0173,
+      "val_loss": -0.5539,
+      "val_l1": 0.0169
+    }
+  ],
+  "final_metrics": {
+    "psnr_db": 32.548,
+    "ssim": 0.7512,
+    "sam_degrees": 3.4843,
+    "downsample_consistency_mae": 0.0016,
+    "spectral_mae": 0.0171,
+    "gradient_similarity": 0.7842,
+    "false_edge_rate": 0.152,
+    "missing_edge_rate": 0.9758,
+    "high_frequency_excess_rate": 0.042,
+    "correctness_score": 0.8097
+  },
+  "is_final_only": false
+}

@@ -19,9 +19,11 @@ export function useJobSocket(jobId: string | null) {
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const attemptsRef = useRef<number>(0);
+  const isTerminalRef = useRef<boolean>(false);
 
   const connect = useCallback(() => {
     if (!jobId || typeof window === "undefined") return;
+    if (isTerminalRef.current) return;
 
     const wsUrl = getWebSocketInferenceUrl(jobId);
     const ws = new WebSocket(wsUrl);
@@ -37,9 +39,14 @@ export function useJobSocket(jobId: string | null) {
       try {
         const data: WebSocketMessage = JSON.parse(event.data);
         if (data.progress_pct !== undefined) setProgress(data.progress_pct);
-        if (data.status) setStatus(data.status);
+        if (data.status) {
+          setStatus(data.status);
+          if (["completed", "failed", "cancelled"].includes(data.status)) {
+            isTerminalRef.current = true;
+          }
+        }
         if (data.result) setResult(data.result);
-        if (data.status === "completed" || data.status === "failed") {
+        if (["completed", "failed", "cancelled"].includes(data.status)) {
           ws.close();
         }
       } catch (err) {
@@ -53,16 +60,18 @@ export function useJobSocket(jobId: string | null) {
     };
 
     ws.onclose = () => {
-      // Reconnect with exponential backoff if not completed and attempts < 5
-      if (status !== "completed" && status !== "failed" && attemptsRef.current < 5) {
+      // Reconnect with exponential backoff ONLY if not in terminal state
+      if (!isTerminalRef.current && attemptsRef.current < 5) {
         const delay = Math.min(1000 * 2 ** attemptsRef.current, 10000);
         attemptsRef.current += 1;
         reconnectTimeoutRef.current = setTimeout(connect, delay);
       }
     };
-  }, [jobId, status]);
+  }, [jobId]);
 
   useEffect(() => {
+    isTerminalRef.current = false;
+    attemptsRef.current = 0;
     if (jobId) {
       connect();
     }

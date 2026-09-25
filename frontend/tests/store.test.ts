@@ -5,21 +5,23 @@ describe("useConsoleStore", () => {
   beforeEach(() => {
     useConsoleStore.setState({
       selectedModel: "rcan",
-      selectedSample: "sample_1",
+      selectedSample: null,
       customFile: null,
       activeView: "single",
       activeBandView: "rgb",
       comparisonSliderPos: 50,
       currentRunId: null,
       currentQuality: "fast",
+      currentSession: null,
     });
   });
 
-  it("initializes with default model and sample", () => {
+  it("initializes with default model and null sample", () => {
     const state = useConsoleStore.getState();
     expect(state.selectedModel).toBe("rcan");
-    expect(state.selectedSample).toBe("sample_1");
+    expect(state.selectedSample).toBeNull();
     expect(state.currentRunId).toBeNull();
+    expect(state.currentSession).toBeNull();
   });
 
   it("updates selected model and resets run state", () => {

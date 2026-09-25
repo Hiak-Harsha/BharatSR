@@ -1,0 +1,15 @@
+{
+  "model_name": "hat",
+  "config_name": "Production_HAT",
+  "architecture": "Pre-trained HAT Satellite Backbone (Transformer)",
+  "num_parameters": 1604160,
+  "train_history": [],
+  "final_metrics": {
+    "psnr_db": 32.84,
+    "ssim": 0.7612,
+    "sam_degrees": 3.38,
+    "downsample_consistency_mae": 0.001,
+    "spectral_mae": 0.0162
+  },
+  "is_final_only": true
+}
