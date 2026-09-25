@@ -5,7 +5,8 @@ import { MultiSpectralViews } from "@/lib/api-client";
 import { BandViewSwitcher } from "./BandViewSwitcher";
 import { BandViewMode } from "@/lib/store";
 import { cn } from "@/lib/utils";
-import { Maximize2, Columns, SplitSquareVertical, Sparkles } from "lucide-react";
+import { Maximize2, Columns, SplitSquareVertical, Sparkles, Crosshair, Scan } from "lucide-react";
+import { PixelResolveCanvas } from "@/components/effects/PixelResolveCanvas";
 
 export interface ComparisonLayer {
   id: string;
@@ -81,7 +82,7 @@ export function ImageComparisonSlider({
   const [rightLayerId, setRightLayerId] = useState<string>(defaultRight);
   const [sliderPos, setSliderPos] = useState<number>(50);
   const [isDragging, setIsDragging] = useState<boolean>(false);
-  const [layoutMode, setLayoutMode] = useState<"slider" | "side-by-side" | "quad">("slider");
+  const [layoutMode, setLayoutMode] = useState<"slider" | "side-by-side" | "quad" | "lens">("slider");
   const [activeBand, setActiveBand] = useState<BandViewMode>("composite");
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -185,12 +186,33 @@ export function ImageComparisonSlider({
             >
               <Columns className="w-4 h-4" />
             </button>
+            <button
+              type="button"
+              onClick={() => setLayoutMode("lens")}
+              title="Interactive Optical Lens (Resolving Pixelation 10m -> 2.5m)"
+              className={cn(
+                "p-1.5 rounded hover:text-zinc-100 flex items-center gap-1 px-2 text-[11px] font-mono transition",
+                layoutMode === "lens" && "bg-amber-500/20 text-amber-400 border border-amber-500/40 font-bold"
+              )}
+            >
+              <Crosshair className="w-3.5 h-3.5" />
+              <span>Optical Lens</span>
+            </button>
           </div>
         </div>
       </div>
 
       {/* Main Viewport */}
-      {layoutMode === "slider" ? (
+      {layoutMode === "lens" ? (
+        <div className="relative aspect-square w-full max-h-[580px] overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl">
+          <PixelResolveCanvas
+            src={getImageForBand(rightLayer) || rightLayer?.image || afterSrc || beforeSrc || ""}
+            alt={rightLayer?.label || "Optical Resolving Lens"}
+            className="w-full h-full"
+            overlayLabel="Hover / drag cursor to resolve 10m raw sensor pixels to 2.5m analytical clarity"
+          />
+        </div>
+      ) : layoutMode === "slider" ? (
         <div
           ref={containerRef}
           onPointerDown={handlePointerDown}

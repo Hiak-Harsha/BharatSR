@@ -72,37 +72,52 @@ export default function LandingPage() {
       <header className="relative px-6 pt-16 pb-10 overflow-hidden">
         <div className="bsr-hero-grid" />
         <div className="max-w-[1100px] mx-auto relative">
-          <div className="text-[11px] tracking-[.16em] uppercase" style={{ color: "var(--bsr-phosphor)" }}>
-            SIH26142 · NTRO · Space Technology
-          </div>
-          <h1 className="font-bold leading-[1.05] my-3.5" style={{ fontSize: "clamp(32px,6vw,58px)" }}>
-            10m is what the<br />satellite sees. <span style={{ color: "var(--bsr-signal)" }}>2.5m</span><br />is what you need.
-          </h1>
-          <p className="text-sm leading-relaxed max-w-[620px]" style={{ color: "var(--bsr-ink-dim)" }}>
-            BharatSR is a physics-constrained super-resolution engine that lifts Sentinel-2 4-band imagery to a
-            2.5m-equivalent analysis grid — without inventing what isn&apos;t there. Every pixel is verified: it
-            must degrade back to exactly what the sensor measured.
-          </p>
-          <div className="flex gap-3 mt-6 flex-wrap">
-            <Link href="/console" className="px-5 py-3 rounded-md text-[13px] font-bold" style={{ background: "var(--bsr-signal)", color: "#100b03" }}>
-              Run Live Inference
-            </Link>
-            <a href="#problem" className="px-[18px] py-[11px] rounded-md text-[13px] border" style={{ borderColor: "var(--bsr-line)", color: "var(--bsr-ink)" }}>
-              See the problem ↓
-            </a>
-          </div>
+          <div className="flex flex-col lg:flex-row items-center justify-between gap-10">
+            <div className="w-full lg:w-1/2 flex flex-col gap-4">
+              <div className="text-[11px] tracking-[.16em] uppercase" style={{ color: "var(--bsr-phosphor)" }}>
+                SIH26142 · NTRO · Space Technology
+              </div>
+              <h1 className="font-bold leading-[1.05]" style={{ fontSize: "clamp(32px,5.5vw,54px)" }}>
+                10m is what the<br />satellite sees. <span style={{ color: "var(--bsr-signal)" }}>2.5m</span><br />is what you need.
+              </h1>
+              <p className="text-sm leading-relaxed max-w-[520px]" style={{ color: "var(--bsr-ink-dim)" }}>
+                BharatSR is a physics-constrained super-resolution engine that lifts Sentinel-2 4-band imagery to a
+                2.5m-equivalent analysis grid — without inventing what isn&apos;t there. Every pixel is verified: it
+                must degrade back to exactly what the sensor measured.
+              </p>
+              <div className="flex gap-3 mt-2 flex-wrap">
+                <Link href="/console" className="px-5 py-3 rounded-md text-[13px] font-bold shadow-lg" style={{ background: "var(--bsr-signal)", color: "#100b03" }}>
+                  Launch Mission Console &rarr;
+                </Link>
+                <a href="#problem" className="px-[18px] py-[11px] rounded-md text-[13px] border" style={{ borderColor: "var(--bsr-line)", color: "var(--bsr-ink)" }}>
+                  Benchmark Perspectives &darr;
+                </a>
+              </div>
+              <div className="flex items-center gap-4 text-xs font-mono text-zinc-500 pt-2">
+                <span>Native GSD: <b className="text-amber-400">10.0m</b></span>
+                <span>•</span>
+                <span>SR Output: <b className="text-cyan-400">2.5m</b></span>
+                <span>•</span>
+                <span>Physics MAE: <b className="text-emerald-400">0.000</b></span>
+              </div>
+            </div>
 
-          {/* ORBIT STAGE */}
-          <div className="relative h-[280px] mt-2.5" aria-hidden="true">
-            <div className="bsr-earth" />
-            <div className="bsr-scan-ring" />
-            <div className="bsr-orbit">
-              <div className="bsr-beam" />
-              <div className="bsr-sat">
-                <svg viewBox="0 0 24 24" fill="none">
-                  <rect x="9" y="9" width="6" height="6" rx="1" fill="#ffb454" />
-                  <path d="M3 12h4M17 12h4M12 3v3M12 18v3" stroke="#ffb454" strokeWidth="1.6" />
-                </svg>
+            {/* HERO INTERACTIVE LENS SHOWCASE */}
+            <div className="w-full lg:w-1/2 max-w-[460px] shrink-0">
+              <div className="p-3.5 rounded-2xl border border-zinc-800 bg-zinc-950/90 backdrop-blur-md shadow-[0_0_50px_rgba(245,158,11,0.15)]">
+                <div className="flex items-center justify-between px-1 pb-2 text-[11px] font-mono">
+                  <span className="text-amber-400 font-bold flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                    LIVE SENSOR FOCUS LENS
+                  </span>
+                  <span className="text-zinc-400 text-[10px]">10m RAW &rarr; 2.5m RESOLVED</span>
+                </div>
+                <PixelResolveCanvas
+                  src={preview?.views.sr || "/satellite_demo.png"}
+                  alt="Interactive Optical Resolving Lens"
+                  className="w-full aspect-square"
+                  overlayLabel="Move cursor / drag touch across tile to resolve 10m pixels"
+                />
               </div>
             </div>
           </div>

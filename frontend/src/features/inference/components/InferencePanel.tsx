@@ -10,8 +10,10 @@ import { ImageComparisonSlider } from "@/components/ui/ImageComparisonSlider";
 import { PixelProfileChart } from "@/components/charts/PixelProfileChart";
 import { UncertaintyScatterChart } from "@/components/charts/UncertaintyScatterChart";
 import { GeospatialViewer } from "@/components/map/GeospatialViewer";
-import { Play, Sparkles, Activity, ShieldCheck, Download, AlertCircle, Clock, CheckCircle2 } from "lucide-react";
+import { Play, Sparkles, Activity, ShieldCheck, Download, AlertCircle, Clock, CheckCircle2, Crosshair } from "lucide-react";
 import { formatTime, cn } from "@/lib/utils";
+import { PixelResolveCanvas } from "@/components/effects/PixelResolveCanvas";
+import { getSamplePreview } from "@/lib/api-client";
 
 export function InferencePanel({ className }: { className?: string }) {
   const selectedModel = useConsoleStore((s) => s.selectedModel);
@@ -27,6 +29,23 @@ export function InferencePanel({ className }: { className?: string }) {
   const [asyncSubmitting, setAsyncSubmitting] = useState<boolean>(false);
   const [asyncError, setAsyncError] = useState<string | null>(null);
   const [asyncResult, setAsyncResult] = useState<SuperResolveResponse | null>(null);
+  const [samplePreviewUrl, setSamplePreviewUrl] = useState<string>("/satellite_demo.png");
+
+  useEffect(() => {
+    async function loadSamplePreview() {
+      const sampleId = selectedSample || "sample_real_s2";
+      try {
+        const p = await getSamplePreview(sampleId, 32);
+        if (p?.views) {
+          const url = (p.views as any).composite || p.views.sr || p.views.lr;
+          if (url) setSamplePreviewUrl(url);
+        }
+      } catch {
+        // fallback
+      }
+    }
+    loadSamplePreview();
+  }, [selectedSample]);
 
   const {
     mutate: runInference,
@@ -324,11 +343,38 @@ export function InferencePanel({ className }: { className?: string }) {
           );
         })()
       ) : (
-        <div className="aspect-square w-full max-h-[480px] rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 flex flex-col items-center justify-center p-8 gap-3 text-center">
-          <Sparkles className="w-10 h-10 text-zinc-700" />
-          <div className="font-mono text-xs text-zinc-500 space-y-1">
-            <p className="text-zinc-400 font-medium">Ready for High-Fidelity Super-Resolution</p>
-            <p>Select a multi-spectral sample or upload a 4-band GeoTIFF to execute inference.</p>
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5 rounded-lg bg-zinc-950 border border-zinc-800 font-mono text-xs shadow-md">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping" />
+              <span className="text-zinc-200 font-bold">Interactive Optical Sensor Lens</span>
+              <span className="text-zinc-500 hidden sm:inline">· 10m Raw S2 Blocks &rarr; 2.5m Analytical Focus</span>
+            </div>
+            <button
+              type="button"
+              onClick={handleRun}
+              className="px-3.5 py-1.5 rounded-md bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold transition flex items-center gap-1.5 shadow"
+            >
+              <Play className="w-3.5 h-3.5 fill-current" />
+              <span>Execute 4x Super-Resolution</span>
+            </button>
+          </div>
+
+          <div className="relative aspect-square w-full max-h-[540px] rounded-xl overflow-hidden border border-zinc-800 bg-zinc-950 shadow-2xl">
+            <PixelResolveCanvas
+              src={samplePreviewUrl || "/satellite_demo.png"}
+              alt="Interactive Optical Resolving Lens"
+              className="w-full h-full"
+              overlayLabel="Hover / drag cursor over 10m raw sensor pixels to resolve 2.5m detail"
+            />
+          </div>
+
+          <div className="flex items-center justify-between text-[11px] font-mono text-zinc-500 px-1">
+            <span>Tile: {selectedSample || "sample_real_s2"} (10m Native Sentinel-2 BOA Reflectance)</span>
+            <span className="text-amber-400 flex items-center gap-1">
+              <Crosshair className="w-3.5 h-3.5" />
+              <span>Move pointer across the image to resolve pixels</span>
+            </span>
           </div>
         </div>
       )}
