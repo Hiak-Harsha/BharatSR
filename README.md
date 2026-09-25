@@ -400,7 +400,19 @@ FastAPI OpenAPI interactive documentation is available at `http://127.0.0.1:8000
 
 ---
 
-## 11. Team & License
+## 11. Cloud & Production Deployment (Vercel, Render, Docker)
+
+BharatSR is engineered for zero-friction cloud deployment:
+- **Frontend (Vercel)**: Next.js 16 app deployed with Edge/Serverless routing. Next.js internal server-side rewrites automatically forward all `/api/*` traffic to the backend, completely eliminating CORS friction and browser security warnings.
+- **Backend (Render)**: FastAPI + PyTorch Docker service with system GDAL and OpenCV. Configured with declarative [`render.yaml`](render.yaml) blueprint.
+- **Unified Local Container**: Complete stack orchestrated via `docker compose up --build`.
+
+For complete step-by-step setup guides, environment variable references, and deployment architectures, consult the [Comprehensive Deployment Guide](docs/DEPLOYMENT.md).
+
+---
+
+## 12. Team & License
 
 Developed for the **Smart India Hackathon (SIH 2026)** under Problem Statement **SIH26142** for the **National Technical Research Organisation (NTRO)**.  
 Licensed under the [MIT License](LICENSE).
+
