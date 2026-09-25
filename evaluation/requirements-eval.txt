@@ -1,0 +1,9 @@
+# BharatSR Offline Evaluation & Benchmarking Dependencies (SIH26142)
+# Install when running evaluation/ scripts or reproducing external benchmarks.
+
+-r ../backend/requirements.txt
+
+# External Benchmarks & Hallucination Assessment
+opensr_test==1.3.3
+kornia==0.8.3
+pytest==9.1.1

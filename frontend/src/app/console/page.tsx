@@ -18,6 +18,7 @@ import { FieldBoundaryOverlay } from "@/features/field-boundary/components/Field
 import { ChangeDetectionPanel } from "@/features/change-detection/components/ChangeDetectionPanel";
 import { BatchJobQueue } from "@/features/jobs/components/BatchJobQueue";
 import { ExportPanel } from "@/features/export/components/ExportPanel";
+import { DownstreamMasksPanel } from "@/features/downstream/components/DownstreamMasksPanel";
 
 import {
   Sparkles,
@@ -26,6 +27,7 @@ import {
   Sprout,
   Maximize2,
   History,
+  Target,
   ListFilter,
   Download,
   Server,
@@ -40,6 +42,7 @@ const NAV_TABS: { id: ConsoleViewMode; label: string; icon: React.ComponentType<
   { id: "crop_health", label: "Crop Health", icon: Sprout },
   { id: "field_boundary", label: "Field Boundary", icon: Maximize2 },
   { id: "change_detection", label: "Change Detection", icon: History },
+  { id: "downstream", label: "Downstream Tasks", icon: Target },
   { id: "jobs", label: "Batch Queue", icon: ListFilter },
   { id: "export", label: "Exports", icon: Download },
 ];
@@ -166,6 +169,12 @@ export default function ConsolePage() {
           {activeView === "change_detection" && (
             <ErrorBoundary fallbackTitle="Change Detection Error">
               <ChangeDetectionPanel />
+            </ErrorBoundary>
+          )}
+
+          {activeView === "downstream" && (
+            <ErrorBoundary fallbackTitle="Downstream Tasks Error">
+              <DownstreamMasksPanel />
             </ErrorBoundary>
           )}
 

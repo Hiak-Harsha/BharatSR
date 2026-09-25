@@ -324,22 +324,40 @@ async def change_detection(
     """
     runs_dir = Path(settings.runs_dir)
 
+    sample_tiles_dir = Path(settings.sample_tiles_dir)
+
     def _sync_calc():
-        def load_run(rid: str) -> np.ndarray:
-            p = runs_dir / f"{rid}.npz"
-            if not p.exists():
-                raise HTTPException(status_code=404, detail=f"Run '{rid}' not found")
-            d = np.load(str(p))
-            return d["sr"].astype(np.float32)
+        def load_sr_data(target_id: str) -> np.ndarray:
+            p = runs_dir / f"{target_id}.npz"
+            if p.exists():
+                try:
+                    d = np.load(str(p))
+                    if "sr" in d:
+                        return d["sr"].astype(np.float32)
+                except Exception as e:
+                    logger.warning(f"Error loading run {target_id}: {e}")
 
-        sr_t1 = load_run(run_id_t1)
-        sr_t2 = load_run(run_id_t2)
+            # Fallback: check if target_id is a pre-loaded sample_id
+            sample_path = sample_tiles_dir / f"{target_id}.npz"
+            if sample_path.exists():
+                lr_img, hr_img, _ = load_input_data(target_id, None, sample_tiles_dir)
+                res = execute_model_sr("rcan", lr_img, hr_img, scale_factor=4)
+                return res.array.astype(np.float32)
 
-        if sr_t1.shape != sr_t2.shape:
             raise HTTPException(
-                status_code=400,
-                detail=f"Shape mismatch: T1={sr_t1.shape}, T2={sr_t2.shape}. Images must have same dimensions.",
+                status_code=404,
+                detail=f"Target '{target_id}' not found in active runs or sample catalog.",
             )
+
+        sr_t1 = load_sr_data(run_id_t1)
+        sr_t2 = load_sr_data(run_id_t2)
+
+        # Ensure spatial dimension compatibility via center crop or overlap
+        if sr_t1.shape != sr_t2.shape:
+            min_h = min(sr_t1.shape[1], sr_t2.shape[1])
+            min_w = min(sr_t1.shape[2], sr_t2.shape[2])
+            sr_t1 = sr_t1[:, :min_h, :min_w]
+            sr_t2 = sr_t2[:, :min_h, :min_w]
 
         idx_t1 = compute_spectral_indices(sr_t1)
         idx_t2 = compute_spectral_indices(sr_t2)

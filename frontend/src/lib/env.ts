@@ -36,6 +36,11 @@ export function getWsBase(): string {
   if (env.NEXT_PUBLIC_WS_URL && env.NEXT_PUBLIC_WS_URL.trim() !== "") {
     return env.NEXT_PUBLIC_WS_URL.replace(/\/$/, "");
   }
+  if (env.NEXT_PUBLIC_API_URL && env.NEXT_PUBLIC_API_URL.trim() !== "") {
+    const wsProto = env.NEXT_PUBLIC_API_URL.startsWith("https") ? "wss:" : "ws:";
+    const host = env.NEXT_PUBLIC_API_URL.replace(/^https?:\/\//, "");
+    return `${wsProto}//${host}`.replace(/\/$/, "");
+  }
   if (typeof window !== "undefined") {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
     return `${proto}//${window.location.host}`;

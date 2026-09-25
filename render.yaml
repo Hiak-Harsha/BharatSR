@@ -11,3 +11,5 @@ services:
         value: "1"
       - key: PORT
         value: "10000"
+      - key: BHARATSR_CORS_ORIGINS
+        value: "https://bharatsr.vercel.app,http://localhost:3000,http://127.0.0.1:3000"

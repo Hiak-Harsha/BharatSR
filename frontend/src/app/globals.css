@@ -1,6 +1,19 @@
 @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;500;700&display=swap");
 @import "tailwindcss";
 
+@theme {
+  --color-zinc-850: #18181c;
+  --color-bsr-bg: #090c10;
+  --color-bsr-bg2: #0d1218;
+  --color-bsr-panel: #10161d;
+  --color-bsr-line: #1d2732;
+  --color-bsr-ink: #e8edf2;
+  --color-bsr-ink-dim: #8a97a3;
+  --color-bsr-signal: #ffb454;
+  --color-bsr-phosphor: #28e0c6;
+  --color-bsr-indigo: #6c7bff;
+}
+
 /*
   BharatSR "Orbital" theme tokens — used by the new landing page (app/page.tsx).
   Added alongside the existing --accent-* tokens below (which the Mission

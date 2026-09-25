@@ -39,6 +39,7 @@ export interface ImageComparisonSliderProps {
   // Shared props
   onInspectPixel?: (x: number, y: number) => void;
   inspectedPoint?: { x: number; y: number } | null;
+  imageDimensions?: { width: number; height: number };
   className?: string;
 }
 
@@ -60,6 +61,7 @@ export function ImageComparisonSlider({
   afterLabel = "BharatSR Output (2.5m-equiv)",
   onInspectPixel,
   inspectedPoint,
+  imageDimensions,
   className,
 }: ImageComparisonSliderProps) {
   // Construct layers from input or legacy props
@@ -114,15 +116,17 @@ export function ImageComparisonSlider({
     const rect = e.currentTarget.getBoundingClientRect();
     const relX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     const relY = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
-    const px = Math.floor(relX * 256);
-    const py = Math.floor(relY * 256);
+    const targetW = imageDimensions?.width || 256;
+    const targetH = imageDimensions?.height || 256;
+    const px = Math.floor(relX * targetW);
+    const py = Math.floor(relY * targetH);
     onInspectPixel(px, py);
   };
 
   return (
     <div className={cn("flex flex-col gap-3 rounded-xl border border-zinc-800 bg-zinc-950/80 p-4", className)}>
       {/* Top Controls: Layers & Mode */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-850 pb-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 pb-3">
         {/* Layer Selectors */}
         <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
           <div className="flex items-center gap-1.5 bg-zinc-900 border border-zinc-800 px-2 py-1 rounded-md">

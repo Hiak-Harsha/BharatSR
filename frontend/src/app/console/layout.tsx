@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ApiKeyModal } from "@/components/ui/ApiKeyModal";
 
 export default function ConsoleLayout({
   children,
@@ -6,8 +7,8 @@ export default function ConsoleLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="bg-[#080c14] text-slate-100 min-h-screen flex flex-col antialiased">
-      <header className="border-b border-slate-800/80 bg-slate-950/70 backdrop-blur-md sticky top-0 z-50">
+    <div className="bg-[#090c10] text-zinc-100 min-h-screen flex flex-col antialiased">
+      <header className="border-b border-zinc-800/80 bg-zinc-950/80 backdrop-blur-md sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-gradient-to-tr from-cyan-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-cyan-500/25">
@@ -17,14 +18,14 @@ export default function ConsoleLayout({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-bold text-lg tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white via-slate-100 to-slate-400">
+                <span className="font-bold text-lg tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white via-zinc-100 to-zinc-400">
                   BharatSR
                 </span>
                 <span className="text-[10px] uppercase font-semibold px-2 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800/60">
                   Mission Console
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-[11px] text-zinc-400">
                 Deep Learning SR Mapping for Satellite Imagery
               </p>
             </div>
@@ -33,13 +34,14 @@ export default function ConsoleLayout({
           <div className="flex items-center gap-4">
             <Link
               href="/"
-              className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-xs text-slate-300 hover:border-slate-600 transition"
+              className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-xs text-zinc-300 hover:border-zinc-600 transition"
             >
               ← Landing
             </Link>
-            <div className="hidden sm:flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-xs text-slate-300">
-              <span className="text-slate-400 font-mono">PS: SIH26142</span>
-              <span className="text-slate-600">•</span>
+            <ApiKeyModal />
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-xs text-zinc-300">
+              <span className="text-zinc-400 font-mono">PS: SIH26142</span>
+              <span className="text-zinc-600">•</span>
               <span className="text-cyan-400 font-medium">NTRO (Space Tech)</span>
             </div>
           </div>
@@ -50,7 +52,7 @@ export default function ConsoleLayout({
         {children}
       </main>
 
-      <footer className="border-t border-slate-900 bg-slate-950/40 text-center py-4 text-xs text-slate-500">
+      <footer className="border-t border-zinc-900 bg-zinc-950/60 text-center py-4 text-xs text-zinc-500">
         <p>BharatSR — Physics-Constrained Satellite Super-Resolution • Smart India Hackathon SIH26142</p>
       </footer>
     </div>

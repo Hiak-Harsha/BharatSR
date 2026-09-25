@@ -1,14 +1,16 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useSuperresolve } from "../hooks/useSuperresolve";
 import { usePixelProfile } from "../hooks/usePixelProfile";
+import { useJobPolling } from "@/features/jobs/hooks/useJobPolling";
+import { submitAsyncSuperresolve, SuperResolveResponse } from "@/lib/api-client";
 import { useConsoleStore } from "@/lib/store";
 import { ImageComparisonSlider } from "@/components/ui/ImageComparisonSlider";
 import { PixelProfileChart } from "@/components/charts/PixelProfileChart";
 import { UncertaintyScatterChart } from "@/components/charts/UncertaintyScatterChart";
 import { GeospatialViewer } from "@/components/map/GeospatialViewer";
-import { Play, Sparkles, Activity, ShieldCheck, Download, AlertCircle } from "lucide-react";
+import { Play, Sparkles, Activity, ShieldCheck, Download, AlertCircle, Clock, CheckCircle2 } from "lucide-react";
 import { formatTime, cn } from "@/lib/utils";
 
 export function InferencePanel({ className }: { className?: string }) {
@@ -17,15 +19,40 @@ export function InferencePanel({ className }: { className?: string }) {
   const customFile = useConsoleStore((s) => s.customFile);
   const currentQuality = useConsoleStore((s) => s.currentQuality);
   const currentRunId = useConsoleStore((s) => s.currentRunId);
+  const setCurrentRunId = useConsoleStore((s) => s.setCurrentRunId);
 
   const [inspectedPoint, setInspectedPoint] = useState<{ x: number; y: number } | null>(null);
+  const [isAsyncMode, setIsAsyncMode] = useState<boolean>(false);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [asyncSubmitting, setAsyncSubmitting] = useState<boolean>(false);
+  const [asyncError, setAsyncError] = useState<string | null>(null);
+  const [asyncResult, setAsyncResult] = useState<SuperResolveResponse | null>(null);
 
   const {
     mutate: runInference,
-    data: srResult,
-    isPending: isInferring,
-    error: inferenceError,
+    data: syncResult,
+    isPending: isSyncInferring,
+    error: syncError,
   } = useSuperresolve();
+
+  const { data: jobData } = useJobPolling(activeJobId);
+
+  // When async job completes, parse result
+  useEffect(() => {
+    if (jobData?.status === "completed" && jobData.result) {
+      try {
+        const parsed = (typeof jobData.result === "string"
+          ? JSON.parse(jobData.result)
+          : jobData.result) as SuperResolveResponse;
+        setAsyncResult(parsed);
+        if (parsed.run_id) {
+          setCurrentRunId(parsed.run_id);
+        }
+      } catch (e) {
+        console.error("Failed to parse async job result:", e);
+      }
+    }
+  }, [jobData, setCurrentRunId]);
 
   const {
     mutate: inspectPixel,
@@ -33,13 +60,38 @@ export function InferencePanel({ className }: { className?: string }) {
     isPending: isProfiling,
   } = usePixelProfile();
 
-  const handleRun = () => {
-    runInference({
-      sampleId: selectedSample || undefined,
-      file: customFile || undefined,
-      modelId: selectedModel,
-      quality: currentQuality,
-    });
+  const srResult = isAsyncMode ? asyncResult : syncResult;
+  const isInferring = isAsyncMode
+    ? asyncSubmitting || (jobData != null && jobData.status !== "completed" && jobData.status !== "failed" && !jobData.is_cancelled)
+    : isSyncInferring;
+  const inferenceError = isAsyncMode ? (asyncError ? new Error(asyncError) : jobData?.error_message ? new Error(jobData.error_message) : null) : syncError;
+
+  const handleRun = async () => {
+    setAsyncError(null);
+    if (!isAsyncMode) {
+      runInference({
+        sampleId: selectedSample || undefined,
+        file: customFile || undefined,
+        modelId: selectedModel,
+        quality: currentQuality,
+      });
+    } else {
+      setAsyncSubmitting(true);
+      setAsyncResult(null);
+      try {
+        const res = await submitAsyncSuperresolve({
+          sampleId: selectedSample || undefined,
+          file: customFile || undefined,
+          modelId: selectedModel,
+          quality: currentQuality,
+        });
+        setActiveJobId(res.job_id);
+      } catch (err: any) {
+        setAsyncError(err?.message || "Failed to submit async job");
+      } finally {
+        setAsyncSubmitting(false);
+      }
+    }
   };
 
   const handlePixelClick = (x: number, y: number) => {
@@ -71,29 +123,56 @@ export function InferencePanel({ className }: { className?: string }) {
           </p>
         </div>
 
-        <button
-          type="button"
-          disabled={isInferring || (!selectedSample && !customFile)}
-          onClick={handleRun}
-          className={cn(
-            "inline-flex items-center gap-2 px-6 py-2.5 rounded-lg font-mono text-xs font-bold tracking-wider uppercase transition shadow-lg",
-            isInferring
-              ? "bg-amber-500/50 text-zinc-950 cursor-not-allowed"
-              : "bg-amber-500 hover:bg-amber-400 text-zinc-950 shadow-[0_0_20px_rgba(245,158,11,0.3)] active:scale-95"
-          )}
-        >
-          {isInferring ? (
-            <>
-              <Activity className="w-4 h-4 animate-spin" />
-              Executing SR Pipeline...
-            </>
-          ) : (
-            <>
-              <Play className="w-4 h-4 fill-current" />
-              Execute 4× Super-Resolution
-            </>
-          )}
-        </button>
+        <div className="flex items-center gap-3">
+          {/* Sync / Async Mode Toggle */}
+          <div className="flex items-center gap-1.5 p-1 rounded-lg bg-zinc-900 border border-zinc-800 font-mono text-xs">
+            <button
+              type="button"
+              onClick={() => setIsAsyncMode(false)}
+              className={cn(
+                "px-2.5 py-1 rounded text-[11px] font-semibold transition",
+                !isAsyncMode ? "bg-zinc-800 text-amber-400 shadow" : "text-zinc-400 hover:text-zinc-200"
+              )}
+            >
+              Direct Sync
+            </button>
+            <button
+              type="button"
+              onClick={() => setIsAsyncMode(true)}
+              className={cn(
+                "px-2.5 py-1 rounded text-[11px] font-semibold transition flex items-center gap-1",
+                isAsyncMode ? "bg-zinc-800 text-amber-400 shadow" : "text-zinc-400 hover:text-zinc-200"
+              )}
+            >
+              <Clock className="w-3 h-3" />
+              Async Queue
+            </button>
+          </div>
+
+          <button
+            type="button"
+            disabled={isInferring || (!selectedSample && !customFile)}
+            onClick={handleRun}
+            className={cn(
+              "inline-flex items-center gap-2 px-6 py-2.5 rounded-lg font-mono text-xs font-bold tracking-wider uppercase transition shadow-lg",
+              isInferring
+                ? "bg-amber-500/50 text-zinc-950 cursor-not-allowed"
+                : "bg-amber-500 hover:bg-amber-400 text-zinc-950 shadow-[0_0_20px_rgba(245,158,11,0.3)] active:scale-95"
+            )}
+          >
+            {isInferring ? (
+              <>
+                <Activity className="w-4 h-4 animate-spin" />
+                {isAsyncMode ? "Processing Job..." : "Executing SR Pipeline..."}
+              </>
+            ) : (
+              <>
+                <Play className="w-4 h-4 fill-current" />
+                Execute 4× Super-Resolution
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       {inferenceError && (
@@ -110,8 +189,26 @@ export function InferencePanel({ className }: { className?: string }) {
       {isInferring ? (
         <div className="aspect-square w-full max-h-[580px] rounded-xl border border-zinc-800 bg-zinc-950 flex flex-col items-center justify-center p-8 gap-4">
           <div className="w-12 h-12 rounded-full border-2 border-amber-500/20 border-t-amber-400 animate-spin" />
-          <div className="font-mono text-xs text-zinc-400 text-center space-y-1">
-            <p className="text-zinc-200 font-bold">Executing Deep Neural Inference...</p>
+          <div className="font-mono text-xs text-zinc-400 text-center space-y-2">
+            <p className="text-zinc-200 font-bold">
+              {isAsyncMode
+                ? `Background Worker Task: Job ${activeJobId?.slice(0, 8) || "..."}`
+                : "Executing Deep Neural Inference..."}
+            </p>
+            {isAsyncMode && jobData && (
+              <div className="w-64 max-w-full mx-auto space-y-1">
+                <div className="w-full bg-zinc-900 border border-zinc-800 h-2 rounded-full overflow-hidden">
+                  <div
+                    className="bg-amber-400 h-full transition-all duration-300"
+                    style={{ width: `${jobData.progress_pct || 15}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-[10px] text-zinc-500">
+                  <span className="capitalize">Status: {jobData.status}</span>
+                  <span>{jobData.progress_pct || 0}%</span>
+                </div>
+              </div>
+            )}
             <p className="text-[11px] text-zinc-500">
               Applying Hann-windowed tile blending & heteroscedastic uncertainty estimation
             </p>
@@ -127,6 +224,11 @@ export function InferencePanel({ className }: { className?: string }) {
           const metrics = srResult.metrics as any;
           const uncertainty = srResult.uncertainty as any;
           const geoMetadata = srResult.geospatial_metadata as any;
+          const dimensions = output?.shape
+            ? { width: output.shape[2], height: output.shape[1] }
+            : input?.shape
+            ? { width: input.shape[2] * 4, height: input.shape[1] * 4 }
+            : undefined;
 
           return (
             <>
@@ -145,6 +247,7 @@ export function InferencePanel({ className }: { className?: string }) {
                 afterLabel={`BharatSR (${srResult.model_id.toUpperCase()} 2.5m)`}
                 inspectedPoint={inspectedPoint}
                 onInspectPixel={handlePixelClick}
+                imageDimensions={dimensions}
               />
 
               {/* Scientific Telemetry Strip */}
@@ -180,46 +283,53 @@ export function InferencePanel({ className }: { className?: string }) {
                   <span className="text-cyan-400 font-bold text-sm">
                     {metrics?.sam?.value != null ? `${Number(metrics.sam.value).toFixed(2)}°` : "N/A"}
                   </span>
-                  <span className="text-[10px] text-zinc-500 block mt-0.5">Spectral Angle Mapper</span>
+                  <span className="text-[10px] text-zinc-500 block mt-0.5">Spectral Mapper</span>
                 </div>
 
                 <div className="p-3 rounded-lg border border-zinc-800 bg-zinc-950 font-mono">
-                  <span className="text-zinc-500 block text-[11px] uppercase">Downsample Cons.</span>
+                  <span className="text-zinc-500 block text-[11px] uppercase">Downsample MAE</span>
                   <span className="text-amber-400 font-bold text-sm">
                     {metrics?.downsample_consistency?.value != null
-                      ? `${(Number(metrics.downsample_consistency.value) * 100).toFixed(1)}%`
+                      ? Number(metrics.downsample_consistency.value).toFixed(4)
                       : "N/A"}
                   </span>
                   <span className="text-[10px] text-zinc-500 block mt-0.5">Physics Preservation</span>
                 </div>
               </div>
 
-              {/* Interactive Inspection Charts & Geospatial View */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <PixelProfileChart
-                  data={pixelProfile ?? null}
-                  isLoading={isProfiling}
-                />
-
+              {/* Pointwise Pixel Profile Inspector */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <PixelProfileChart data={pixelProfile ?? null} isLoading={isProfiling} />
                 <UncertaintyScatterChart
                   scatter={uncertainty?.scatter}
                   summary={uncertainty?.summary}
                 />
               </div>
 
-              {/* Authentic Geospatial Viewer */}
-              <GeospatialViewer
-                geoMetadata={geoMetadata}
-                imageUrl={output.image}
-                label="Super-Resolved Output Tile"
-              />
+              {/* Interactive Geospatial Viewer (if georeferenced) */}
+              {geoMetadata?.has_geo && (
+                <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+                  <h3 className="font-mono text-sm font-bold text-zinc-100 flex items-center gap-2 mb-3">
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                    Interactive Geospatial GIS Footprint (EPSG:32643 / WGS 84)
+                  </h3>
+                  <GeospatialViewer
+                    geoMetadata={geoMetadata}
+                    imageUrl={output?.image || ""}
+                    className="h-80"
+                  />
+                </div>
+              )}
             </>
           );
         })()
       ) : (
-        <div className="p-12 rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 text-center font-mono text-xs text-zinc-500 flex flex-col items-center gap-3">
-          <Activity className="w-8 h-8 text-zinc-700" />
-          <span>Select a Sentinel-2 sample tile or upload custom imagery, then click Execute.</span>
+        <div className="aspect-square w-full max-h-[480px] rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 flex flex-col items-center justify-center p-8 gap-3 text-center">
+          <Sparkles className="w-10 h-10 text-zinc-700" />
+          <div className="font-mono text-xs text-zinc-500 space-y-1">
+            <p className="text-zinc-400 font-medium">Ready for High-Fidelity Super-Resolution</p>
+            <p>Select a multi-spectral sample or upload a 4-band GeoTIFF to execute inference.</p>
+          </div>
         </div>
       )}
     </div>

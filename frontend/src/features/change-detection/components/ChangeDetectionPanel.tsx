@@ -1,17 +1,26 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useChangeDetection } from "../hooks/useChangeDetection";
+import { useSamples } from "@/features/samples/hooks/useSamples";
 import { useConsoleStore } from "@/lib/store";
-import { History, Play, Activity, AlertCircle, ShieldAlert, ArrowRight } from "lucide-react";
+import { History, Play, Activity, AlertCircle, ShieldAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function ChangeDetectionPanel({ className }: { className?: string }) {
   const currentRunId = useConsoleStore((s) => s.currentRunId);
+  const { data: samples } = useSamples();
 
-  const [runIdT1, setRunIdT1] = useState<string>("sample_real_s2");
-  const [runIdT2, setRunIdT2] = useState<string>(currentRunId || "sample_1");
+  const [runIdT1, setRunIdT1] = useState<string>("sample_1");
+  const [runIdT2, setRunIdT2] = useState<string>("sample_2");
   const [method, setMethod] = useState<string>("ndvi_diff");
+
+  // Automatically update T2 if a fresh run is executed in console
+  useEffect(() => {
+    if (currentRunId && currentRunId !== runIdT1) {
+      setRunIdT2(currentRunId);
+    }
+  }, [currentRunId, runIdT1]);
 
   const {
     mutate: runChangeDetect,
@@ -74,26 +83,58 @@ export function ChangeDetectionPanel({ className }: { className?: string }) {
           <label className="text-zinc-500 block text-[11px] uppercase mb-1">
             Reference Epoch (T1 - Earlier)
           </label>
-          <input
-            type="text"
+          <select
             value={runIdT1}
             onChange={(e) => setRunIdT1(e.target.value)}
-            placeholder="run_id or sample_id"
-            className="w-full bg-zinc-900 border border-zinc-800 px-3 py-2 rounded-lg text-zinc-200 focus:border-amber-500 focus:outline-none"
-          />
+            className="w-full bg-zinc-900 border border-zinc-800 px-3 py-2 rounded-lg text-zinc-200 focus:border-amber-500 focus:outline-none cursor-pointer"
+          >
+            {samples?.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.title} ({s.id})
+              </option>
+            ))}
+            {currentRunId && (
+              <option value={currentRunId}>Active Run ({currentRunId})</option>
+            )}
+            <option value="custom">Custom ID / Manual Entry</option>
+          </select>
+          {runIdT1 === "custom" && (
+            <input
+              type="text"
+              onChange={(e) => setRunIdT1(e.target.value)}
+              placeholder="Enter run_id or sample_id"
+              className="mt-2 w-full bg-zinc-900 border border-zinc-800 px-3 py-1.5 rounded text-zinc-200 text-xs focus:border-amber-500 focus:outline-none"
+            />
+          )}
         </div>
 
         <div>
           <label className="text-zinc-500 block text-[11px] uppercase mb-1">
             Target Epoch (T2 - Later)
           </label>
-          <input
-            type="text"
+          <select
             value={runIdT2}
             onChange={(e) => setRunIdT2(e.target.value)}
-            placeholder="run_id or sample_id"
-            className="w-full bg-zinc-900 border border-zinc-800 px-3 py-2 rounded-lg text-zinc-200 focus:border-amber-500 focus:outline-none"
-          />
+            className="w-full bg-zinc-900 border border-zinc-800 px-3 py-2 rounded-lg text-zinc-200 focus:border-amber-500 focus:outline-none cursor-pointer"
+          >
+            {currentRunId && (
+              <option value={currentRunId}>Active Run ({currentRunId})</option>
+            )}
+            {samples?.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.title} ({s.id})
+              </option>
+            ))}
+            <option value="custom">Custom ID / Manual Entry</option>
+          </select>
+          {runIdT2 === "custom" && (
+            <input
+              type="text"
+              onChange={(e) => setRunIdT2(e.target.value)}
+              placeholder="Enter run_id or sample_id"
+              className="mt-2 w-full bg-zinc-900 border border-zinc-800 px-3 py-1.5 rounded text-zinc-200 text-xs focus:border-amber-500 focus:outline-none"
+            />
+          )}
         </div>
 
         <div>
@@ -137,7 +178,7 @@ export function ChangeDetectionPanel({ className }: { className?: string }) {
               <span className="font-mono text-xs font-semibold text-zinc-300">
                 NDVI Differential Map
               </span>
-              <div className="aspect-square w-full rounded bg-black overflow-hidden border border-zinc-850">
+              <div className="aspect-square w-full rounded bg-black overflow-hidden border border-zinc-800">
                 <img
                   src={changeData.ndvi_difference_map}
                   alt="NDVI Diff"
@@ -150,7 +191,7 @@ export function ChangeDetectionPanel({ className }: { className?: string }) {
               <span className="font-mono text-xs font-semibold text-zinc-300">
                 Spectral Vector Diff
               </span>
-              <div className="aspect-square w-full rounded bg-black overflow-hidden border border-zinc-850">
+              <div className="aspect-square w-full rounded bg-black overflow-hidden border border-zinc-800">
                 <img
                   src={changeData.spectral_difference_map}
                   alt="Spectral Diff"
@@ -163,7 +204,7 @@ export function ChangeDetectionPanel({ className }: { className?: string }) {
               <span className="font-mono text-xs font-semibold text-zinc-300">
                 Change Magnitude (Thresholded)
               </span>
-              <div className="aspect-square w-full rounded bg-black overflow-hidden border border-zinc-850">
+              <div className="aspect-square w-full rounded bg-black overflow-hidden border border-zinc-800">
                 <img
                   src={changeData.change_magnitude_map}
                   alt="Magnitude"
@@ -229,7 +270,7 @@ export function ChangeDetectionPanel({ className }: { className?: string }) {
       ) : (
         <div className="p-12 rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 text-center font-mono text-xs text-zinc-500 flex flex-col items-center gap-3">
           <History className="w-8 h-8 text-zinc-700" />
-          <span>Specify T1 and T2 run IDs, then click "Execute Change Detection".</span>
+          <span>Select T1 and T2 from samples or active runs, then click "Execute Change Detection".</span>
         </div>
       )}
     </div>

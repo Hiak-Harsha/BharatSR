@@ -1,34 +1,55 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# BharatSR Web Console (SIH26142)
 
-## Getting Started
+Frontend interface for the **BharatSR** 4x satellite super-resolution system, built with Next.js 16 (React 19), MapLibre GL, Zustand, TanStack Query, and Tailwind CSS.
 
-First, run the development server:
+---
 
+## Getting Started Locally
+
+### 1. Install Dependencies
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 2. Configure Environment Variables
+Copy `.env.example` to `.env.local`:
+```bash
+cp .env.example .env.local
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Default variables for local development:
+```env
+BACKEND_INTERNAL_URL=http://127.0.0.1:8000
+NEXT_PUBLIC_WS_URL=ws://127.0.0.1:8000
+```
 
-## Learn More
+### 3. Run Development Server
+```bash
+npm run dev
+```
 
-To learn more about Next.js, take a look at the following resources:
+Open [http://localhost:3000](http://localhost:3000) for the Landing Page and [http://localhost:3000/console](http://localhost:3000/console) for the Super-Resolution Console.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+---
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Testing & Quality Assurance
 
-## Deploy on Vercel
+```bash
+# Run Vitest test suite
+npm test
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+# Run Next.js production build verification
+npm run build
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+---
+
+## Deployment on Vercel
+
+When importing this repository into Vercel:
+1. **Root Directory**: Select `frontend`.
+2. **Framework Preset**: `Next.js`.
+3. **Environment Variables**:
+   - `BACKEND_INTERNAL_URL`: Your live backend URL on Render (e.g. `https://bharatsr-backend.onrender.com`).
+   - `NEXT_PUBLIC_WS_URL`: Your live backend WebSocket URL (e.g. `wss://bharatsr-backend.onrender.com`).
+4. **Deploy**: All `/api/*` routes are automatically forwarded to your Render backend via Next.js internal server-side rewrites in `next.config.ts`, eliminating browser CORS issues.
