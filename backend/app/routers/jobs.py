@@ -44,7 +44,9 @@ def get_job_status(job_id: str, store: JobStore = Depends(get_job_store)):
                 with open(result_file, "r") as f:
                     response_data["result"] = json.load(f)
             except Exception as e:
+                logger.warning(f"Failed to load cached result from {result_file}: {e}")
                 response_data["error_message"] = f"Failed to load cached result: {e}"
+
 
     return JobStatusResponse(**response_data)
 
@@ -121,5 +123,6 @@ async def websocket_inference_progress(
     finally:
         try:
             await websocket.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Ignored error closing websocket for job {job_id}: {e}")
+

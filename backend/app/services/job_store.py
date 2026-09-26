@@ -41,9 +41,10 @@ class JobStore:
             if self._conn is not None:
                 try:
                     self._conn.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Error closing SQLite connection: {e}")
                 self._conn = None
+
 
     def _init_db(self):
         """Create tables and apply incremental schema migrations if needed."""
@@ -160,8 +161,10 @@ class JobStore:
         if result.get("metrics_json"):
             try:
                 result["metrics"] = json.loads(result["metrics_json"])
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Failed to parse metrics_json for job {job_id}: {e}")
                 result["metrics"] = None
+
         else:
             result["metrics"] = None
         return result
@@ -194,15 +197,16 @@ class JobStore:
                     if p.exists():
                         try:
                             p.unlink()
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.warning(f"Failed to unlink expired result file {p}: {e}")
                 if runs_dir:
                     npz_file = runs_dir / f"{row['job_id']}.npz"
                     if npz_file.exists():
                         try:
                             npz_file.unlink()
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.warning(f"Failed to unlink expired artifact {npz_file}: {e}")
+
             self._conn.execute("DELETE FROM jobs WHERE created_at < ?", (cutoff,))
             self._conn.commit()
         return deleted_count

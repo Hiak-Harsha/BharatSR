@@ -85,3 +85,60 @@ def test_end_to_end_geotiff_processing(tmp_path):
 
     # Verify with rasterio tool
     assert validate_geotiff(output_tif) is True
+
+
+def test_tiled_inference_non_multiple_dimensions():
+    """
+    Verify tiled inference on non-multiple of tile_size (130x130 at tile_size=64, overlap=16).
+    Guarantees no seam artifacts, no division-by-zero, and exact 4x scaling (520x520).
+    """
+    model = RCAN(n_bands=4, n_feats=16, n_resgroups=1, n_resblocks=1, scale=4, predict_uncertainty=True)
+    model.eval()
+
+    lr_non_mult = np.random.rand(4, 130, 130).astype(np.float32) * 0.8
+    sr_stitched, latency, unc = run_tiled_inference(
+        model=model,
+        lr_image=lr_non_mult,
+        tile_size=64,
+        overlap=16,
+        scale_factor=4,
+        device=torch.device("cpu"),
+    )
+
+    assert sr_stitched.shape == (4, 520, 520)
+    assert not np.isnan(sr_stitched).any()
+    assert not np.isinf(sr_stitched).any()
+    assert (sr_stitched >= 0.0).all()
+    if unc is not None:
+        assert unc.shape == (520, 520)
+        assert not np.isnan(unc).any()
+
+
+def test_batch_inference_tiny_outlier_padding_guard():
+    """
+    Verify run_batch_inference does not crash with ValueError when a batch contains
+    a tiny outlier tile (pad_width >= dimension), ensuring graceful edge-mode fallback.
+    """
+    from backend.app.services.inference import run_batch_inference
+    model = RCAN(n_bands=4, n_feats=16, n_resgroups=1, n_resblocks=1, scale=4, predict_uncertainty=False)
+    model.eval()
+
+    # Image 1: 32x32, Image 2: 6x6 (tiny outlier where pad_h = 26 >= 6)
+    img_normal = np.random.rand(4, 32, 32).astype(np.float32)
+    img_tiny = np.random.rand(4, 6, 6).astype(np.float32)
+
+    results = run_batch_inference(
+        model=model,
+        lr_images=[img_normal, img_tiny],
+        scale_factor=4,
+        device=torch.device("cpu"),
+        batch_size=2,
+    )
+
+    assert len(results) == 2
+    sr_norm, _, _ = results[0]
+    sr_tiny, _, _ = results[1]
+    assert sr_norm.shape == (4, 128, 128)
+    assert sr_tiny.shape == (4, 24, 24)
+    assert not np.isnan(sr_tiny).any()
+

@@ -234,6 +234,8 @@ export default function ConsoleLayout({
               <span className="text-zinc-500 text-[11px]">Checking…</span>
             ) : isHealthError ? (
               <StatusBadge status="Offline" variant="error" />
+            ) : health?.degraded ? (
+              <StatusBadge status="Degraded" variant="warning" />
             ) : (
               <StatusBadge status={health?.status || "Ready"} variant="success" />
             )}

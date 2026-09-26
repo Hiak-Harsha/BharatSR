@@ -18,6 +18,9 @@ from backend.app.models_ml.hat_sr import HAT_SR
 from backend.app.models_ml.diffusion_sr import DiffusionSR
 from backend.app.models_ml.ensemble_sr import EnsembleSR
 from backend.app.models_ml.uncertainty import logvar_to_std
+from backend.app.core.logging import get_logger
+
+logger = get_logger("bharatsr.inference")
 
 
 class ModelRegistry:
@@ -32,19 +35,19 @@ class ModelRegistry:
         self._metadata: Dict[str, dict] = {}
         if torch.cuda.is_available():
             self._device = torch.device("cuda")
-            print(f"ModelRegistry: GPU detected -> {torch.cuda.get_device_name(0)}")
+            logger.info(f"ModelRegistry: GPU detected -> {torch.cuda.get_device_name(0)}")
         elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
             self._device = torch.device("mps")
-            print("ModelRegistry: Apple Silicon MPS detected")
+            logger.info("ModelRegistry: Apple Silicon MPS detected")
         else:
             self._device = torch.device("cpu")
-            print("ModelRegistry: Running on CPU")
+            logger.info("ModelRegistry: CPU selected as computation device")
 
     def load_model(self, model_id: str, checkpoint_path: str) -> bool:
         """Load a model from a checkpoint file."""
         path = Path(checkpoint_path)
         if not path.exists():
-            print(f"Checkpoint not found: {path}")
+            logger.error(f"Checkpoint not found: {path}")
             return False
 
         try:
@@ -109,7 +112,7 @@ class ModelRegistry:
                 arch = "Conditional Diffusion with UNet Backbone"
                 has_unc = True
             else:
-                print(f"Unknown model ID: {model_id}")
+                logger.error(f"Unknown model ID: {model_id}")
                 return False
 
             if "model_state_dict" in checkpoint:
@@ -129,17 +132,19 @@ class ModelRegistry:
                 "has_uncertainty": has_unc,
                 "status": "loaded",
             }
-            print(f"Loaded model '{model_id}' ({name}) from {path}")
+            logger.info(f"Loaded model '{model_id}' ({name}) from {path}")
             return True
 
         except Exception as e:
-            print(f"Error loading model '{model_id}': {e}")
+            logger.error(f"Error loading model '{model_id}' from {checkpoint_path}: {e}", exc_info=True)
             return False
 
     def build_ensemble(self, model_ids: list, weights: list = None) -> Optional[EnsembleSR]:
         """Build and register an inference-time weighted ensemble from loaded models."""
         models = [self.get_model(m_id) for m_id in model_ids]
         if any(m is None for m in models):
+            missing = [m_id for m_id, m in zip(model_ids, models) if m is None]
+            logger.error(f"Cannot build ensemble: missing models {missing}")
             return None
         weights = weights or [1.0 / len(models)] * len(models)
         ensemble = EnsembleSR(models=models, weights=weights, model_names=model_ids)
@@ -155,15 +160,18 @@ class ModelRegistry:
             "has_uncertainty": ensemble.predict_uncertainty,
             "status": "loaded",
         }
+        logger.info(f"Successfully built ensemble from models {model_ids} with weights {weights}")
         return ensemble
 
     def hot_reload(self, model_id: str, checkpoint_path: str) -> bool:
         """Hot-reload a model from an updated checkpoint without server restart."""
+        logger.info(f"Hot-reloading model '{model_id}' from {checkpoint_path}")
         if model_id in self._models:
             del self._models[model_id]
         if model_id in self._metadata:
             del self._metadata[model_id]
         return self.load_model(model_id, checkpoint_path)
+
 
     def get_model(self, model_id: str) -> Optional[torch.nn.Module]:
         return self._models.get(model_id)
@@ -346,10 +354,14 @@ def run_tiled_inference(
     step = max(1, tile_size - overlap)
     y_starts = list(range(0, max(1, h - tile_size + 1), step))
     if y_starts[-1] + tile_size < h:
-        y_starts.append(h - tile_size)
+        y_starts.append(max(0, h - tile_size))
+    y_starts = sorted(list(set(y_starts)))
+
     x_starts = list(range(0, max(1, w - tile_size + 1), step))
     if x_starts[-1] + tile_size < w:
-        x_starts.append(w - tile_size)
+        x_starts.append(max(0, w - tile_size))
+    x_starts = sorted(list(set(x_starts)))
+
 
     for y0 in y_starts:
         for x0 in x_starts:
@@ -495,7 +507,12 @@ def run_batch_inference(
         for img in batch:
             c, h, w = img.shape
             pad_h, pad_w = max_h - h, max_w - w
-            padded.append(np.pad(img, ((0, 0), (0, pad_h), (0, pad_w)), mode="reflect"))
+            # Guard against ValueError in reflect mode when pad size >= image dimension
+            pad_mode = "reflect"
+            if pad_h >= h or pad_w >= w:
+                pad_mode = "edge"
+            padded.append(np.pad(img, ((0, 0), (0, pad_h), (0, pad_w)), mode=pad_mode))
+
 
         batch_tensor = torch.stack([torch.from_numpy(p) for p in padded]).float().to(device)
         t0 = time.time()

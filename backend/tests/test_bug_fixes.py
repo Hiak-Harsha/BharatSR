@@ -69,3 +69,67 @@ def test_job_completed_at_not_set_during_processing(tmp_path):
     store.update_job(job_id, status="completed", progress_pct=100)
     job_done = store.get_job(job_id)
     assert job_done["completed_at"] is not None, "completed_at must be populated when status='completed'"
+
+
+def test_sample_id_path_traversal_prevention():
+    """Verify that path traversal strings in sample_id are cleanly rejected with 404."""
+    from fastapi.testclient import TestClient
+    from backend.app.main import create_app
+
+    app = create_app()
+    with TestClient(app) as client:
+        # Test preview with path traversal
+        res = client.get("/api/samples/..%2F..%2Fetc%2Fpasswd/preview")
+        assert res.status_code == 404
+
+        # Test superresolve with path traversal
+        res_sr = client.post("/api/superresolve", data={"sample_id": "../../etc/passwd", "model_id": "rcan"})
+        assert res_sr.status_code == 404
+
+        # Test export with path traversal
+        res_exp = client.get("/api/export/geotiff?sample_id=../../etc/passwd")
+        assert res_exp.status_code == 404
+
+
+def test_training_ablations_endpoint():
+    """Verify GET /api/training/ablations returns the 6 scientific configurations."""
+    from fastapi.testclient import TestClient
+    from backend.app.main import create_app
+
+    app = create_app()
+    with TestClient(app) as client:
+        res = client.get("/api/training/ablations")
+        assert res.status_code == 200
+        data = res.json()
+        assert "ablations" in data
+        assert len(data["ablations"]) == 6
+        config_names = [a["config_name"] for a in data["ablations"]]
+        assert "A_Bicubic" in config_names
+        assert "F_RCAN_Full" in config_names
+
+
+def test_all_models_loaded_and_ensemble():
+    """Verify GET /api/models returns base models plus auto-built ensemble and diffusion."""
+    from fastapi.testclient import TestClient
+    from backend.app.main import create_app
+
+    app = create_app()
+    with TestClient(app) as client:
+        res = client.get("/api/models")
+        assert res.status_code == 200
+        models = [m["id"] for m in res.json()["models"]]
+        assert "srcnn" in models
+        assert "rcan" in models
+        assert "swinir" in models
+        assert "hat" in models
+        assert "diffusion" in models
+        assert "ensemble" in models
+
+        # Test health check reporting
+        health_res = client.get("/api/health")
+        assert health_res.status_code == 200
+        h_data = health_res.json()
+        assert h_data["degraded"] is False
+        assert h_data["models_loaded"] >= 5
+        assert "models" in h_data
+

@@ -64,7 +64,7 @@ async def lifespan(app: FastAPI):
 
     # Load pre-trained models from weights directory
     weights_dir = Path(settings.weights_dir)
-    for model_name in ["srcnn", "rcan", "swinir", "hat"]:
+    for model_name in ["srcnn", "rcan", "swinir", "hat", "diffusion"]:
         ckpt_path = weights_dir / f"{model_name}_best.pth"
         if ckpt_path.exists():
             success = model_registry.load_model(model_name, str(ckpt_path))
@@ -73,8 +73,25 @@ async def lifespan(app: FastAPI):
         else:
             logger.info(f"{model_name.upper()} checkpoint not present at {ckpt_path}")
 
+    # Auto-build the ensemble from all successfully loaded base models
+    base_models = [m["id"] for m in model_registry.list_models() if m["id"] in ["srcnn", "rcan", "swinir", "hat", "diffusion"]]
+    if len(base_models) >= 2:
+        ensemble_instance = model_registry.build_ensemble(model_ids=base_models)
+        if ensemble_instance:
+            logger.info(f"Auto-built ensemble model from {len(base_models)} base architectures: {base_models}")
+    elif len(base_models) == 1:
+        ensemble_instance = model_registry.build_ensemble(model_ids=base_models)
+        if ensemble_instance:
+            logger.info(f"Auto-built single-model fallback ensemble from: {base_models}")
+
     loaded_models = [m["id"] for m in model_registry.list_models()]
-    logger.info(f"Active models in registry on device ({model_registry.device}): {loaded_models}")
+    if len(loaded_models) == 0:
+        logger.critical(
+            "CRITICAL: 0 neural super-resolution models loaded! System operating in degraded bicubic-only baseline mode."
+        )
+    else:
+        logger.info(f"Active models in registry on device ({model_registry.device}): {loaded_models}")
+
 
     yield
 

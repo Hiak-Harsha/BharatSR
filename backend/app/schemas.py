@@ -17,6 +17,11 @@ class HealthResponse(BaseModel):
     device: str = Field(..., example="cpu")
     version: str = Field(..., example="0.2.0")
     active_jobs: int = Field(0, example=0)
+    degraded: bool = Field(False, description="True if zero models are loaded")
+    models: Optional[List[Dict[str, Any]]] = Field(None, description="Per-model status list")
+
+    class Config:
+        extra = "allow"
 
 
 class ModelInfo(BaseModel):
@@ -404,4 +409,34 @@ class ModelCardResponse(BaseModel):
     training_config: Dict[str, Any]
     final_metrics: Dict[str, Any]
     recommended_use: str
+
+
+class AblationRecord(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    config_name: str
+    architecture: str
+    checkpoint_file: Optional[str] = None
+    epoch: Optional[int] = None
+    val_loss: Optional[float] = None
+    parameters_count: Optional[int] = None
+    n_feats: Optional[int] = None
+    n_resgroups: Optional[int] = None
+    n_resblocks: Optional[int] = None
+    loss_weights: Optional[Dict[str, float]] = None
+    psnr_db: Optional[float] = None
+    ssim: Optional[float] = None
+    sam_degrees: Optional[float] = None
+    downsample_consistency_mae: Optional[float] = None
+    spectral_mae: Optional[float] = None
+    latency_median_s: Optional[float] = None
+    key_contribution: str
+
+
+class AblationComparisonResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    title: str
+    description: str
+    baseline: str
+    ablations: List[AblationRecord]
+
 

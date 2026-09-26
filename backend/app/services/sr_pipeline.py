@@ -12,7 +12,9 @@ from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
 from datetime import datetime, timezone
 
+import re
 import numpy as np
+
 from PIL import Image
 from fastapi import HTTPException
 
@@ -77,7 +79,14 @@ def load_input_data(
     Never fabricates coordinates or CRS.
     """
     if sample_id:
-        sample_path = sample_tiles_dir / f"{sample_id}.npz"
+        clean_id = Path(sample_id).name
+        if clean_id != sample_id or not re.match(r"^[a-zA-Z0-9_-]+$", sample_id):
+            raise HTTPException(status_code=404, detail=f"Sample '{sample_id}' not found")
+        sample_path = (sample_tiles_dir / f"{sample_id}.npz").resolve()
+        try:
+            sample_path.relative_to(sample_tiles_dir.resolve())
+        except ValueError:
+            raise HTTPException(status_code=404, detail=f"Sample '{sample_id}' not found")
         if not sample_path.exists():
             raise HTTPException(status_code=404, detail=f"Sample '{sample_id}' not found")
         lr_image, hr_image = load_sample_tile(str(sample_path))
@@ -97,10 +106,12 @@ def load_input_data(
                             "message": "No geospatial reference available (Synthetic procedural benchmark)",
                             "source_dataset": sidecar.get("source_dataset", "Synthetic"),
                         }
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Error reading sample sidecar {sidecar_path}: {e}")
                 geo_metadata = {"has_geo": False, "message": "No geospatial reference available"}
         else:
             geo_metadata = {"has_geo": False, "message": "No geospatial reference available"}
+
 
         return lr_image, hr_image, geo_metadata
 

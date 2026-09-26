@@ -206,6 +206,27 @@ body {
   background-size: 38px 38px;
   mask-image: radial-gradient(ellipse at 50% 20%, #000 40%, transparent 75%);
 }
+.bsr-orbit-wrapper {
+  animation: bsr-orbit-arrive 4.2s cubic-bezier(0.22, 1, 0.36, 1) 1 both;
+}
+@keyframes bsr-orbit-arrive {
+  0% {
+    opacity: 0;
+    filter: brightness(1);
+  }
+  12% {
+    opacity: 1;
+    filter: brightness(1.35);
+  }
+  40% {
+    opacity: 1;
+    filter: brightness(1.35);
+  }
+  100% {
+    opacity: 0.62;
+    filter: brightness(1.05);
+  }
+}
 .bsr-earth {
   position: absolute;
   left: 50%;
@@ -215,8 +236,8 @@ body {
   border-radius: 50%;
   transform: translate(-50%, -50%);
   background: radial-gradient(circle at 35% 30%, #1c3a3a, #0a1a1c 70%);
-  border: 1px solid rgba(40, 224, 198, 0.35);
-  box-shadow: 0 0 60px rgba(40, 224, 198, 0.12), inset -20px -20px 50px rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(40, 224, 198, 0.5);
+  box-shadow: 0 0 90px rgba(40, 224, 198, 0.22), inset -20px -20px 50px rgba(0, 0, 0, 0.55);
 }
 .bsr-earth::after {
   content: "";
@@ -232,7 +253,7 @@ body {
   width: 270px;
   height: 270px;
   margin: -135px 0 0 -135px;
-  border: 1px dashed rgba(108, 123, 255, 0.35);
+  border: 1px dashed rgba(108, 123, 255, 0.55);
   border-radius: 50%;
   animation: bsr-spin 14s linear infinite;
 }
@@ -243,7 +264,7 @@ body {
   width: 16px;
   height: 16px;
   margin-left: -8px;
-  filter: drop-shadow(0 0 6px var(--bsr-signal));
+  filter: drop-shadow(0 0 10px var(--bsr-signal)) drop-shadow(0 0 4px #ffffff);
 }
 .bsr-beam {
   position: absolute;
@@ -252,7 +273,7 @@ body {
   width: 2px;
   height: 120px;
   margin-left: -1px;
-  background: linear-gradient(to bottom, rgba(255, 180, 84, 0.9), transparent);
+  background: linear-gradient(to bottom, rgba(255, 180, 84, 0.95), transparent);
 }
 @keyframes bsr-spin {
   to {
@@ -317,8 +338,13 @@ body {
   }
 }
 
-/* Reduced motion: freeze orbit and scan animations */
+/* Reduced motion: freeze orbit and scan animations, show settled ambient state */
 @media (prefers-reduced-motion: reduce) {
+  .bsr-orbit-wrapper {
+    animation: none !important;
+    opacity: 0.62 !important;
+    filter: brightness(1.05) !important;
+  }
   .bsr-orbit {
     animation-play-state: paused !important;
   }

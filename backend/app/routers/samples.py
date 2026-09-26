@@ -4,9 +4,11 @@ Provides discovery and previews of pre-loaded Sentinel-2 sample tiles.
 Uses in-memory caching and non-blocking asyncio.to_thread offloading.
 """
 
+import re
 import asyncio
 from pathlib import Path
 import json
+
 from typing import List, Optional
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException
@@ -52,8 +54,9 @@ def _load_samples_sync(sample_dir_path: str) -> List[SampleInfo]:
                 try:
                     with open(sidecar_file, "r") as sf:
                         sidecar = json.load(sf)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Error parsing sidecar json for sample {f.stem}: {e}")
+
 
             has_geo = sidecar.get("has_geo", False)
             crs = sidecar.get("crs", None)
@@ -138,10 +141,18 @@ async def sample_preview(
     (/ Ground Truth if available), each as a base64 RGB PNG.
     """
     def _sync_preview():
+        clean_id = Path(sample_id).name
+        if clean_id != sample_id or not re.match(r"^[a-zA-Z0-9_-]+$", sample_id):
+            raise HTTPException(status_code=404, detail=f"Sample '{sample_id}' not found")
         sample_tiles_dir = Path(settings.sample_tiles_dir)
-        sample_path = sample_tiles_dir / f"{sample_id}.npz"
+        sample_path = (sample_tiles_dir / f"{sample_id}.npz").resolve()
+        try:
+            sample_path.relative_to(sample_tiles_dir.resolve())
+        except ValueError:
+            raise HTTPException(status_code=404, detail=f"Sample '{sample_id}' not found")
         if not sample_path.exists():
             raise HTTPException(status_code=404, detail=f"Sample '{sample_id}' not found")
+
 
         lr_image, hr_image = load_sample_tile(str(sample_path))
         c, h, w = lr_image.shape

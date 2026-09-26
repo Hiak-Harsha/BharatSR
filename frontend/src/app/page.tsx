@@ -106,7 +106,7 @@ export default function LandingPage() {
         <div className="bsr-hero-grid" />
 
         {/* OrbitScene — background ambient layer */}
-        <div className="absolute inset-0 pointer-events-none opacity-40" style={{ zIndex: 0 }}>
+        <div className="bsr-orbit-wrapper absolute inset-0 pointer-events-none" style={{ zIndex: 0 }}>
           <OrbitScene />
         </div>
 

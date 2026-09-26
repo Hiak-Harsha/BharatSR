@@ -12,7 +12,7 @@
           "health"
         ],
         "summary": "Health",
-        "description": "Health check endpoint confirming API status, loaded models, and device.",
+        "description": "Health check endpoint confirming API status, per-model status, degraded state, and device.",
         "operationId": "health_api_health_get",
         "responses": {
           "200": {
@@ -1281,10 +1281,245 @@
           }
         }
       }
+    },
+    "/api/training/ablations": {
+      "get": {
+        "tags": [
+          "dataset"
+        ],
+        "summary": "Get Ablation Comparison",
+        "description": "Surface the 6 scientific ablation configurations comparing loss functions,\narchitectural capacity, and physical constraints. Loads checkpoint metadata\ndirectly from backend/weights/rcan_ablation_*.pth and verified test reports.",
+        "operationId": "get_ablation_comparison_api_training_ablations_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AblationComparisonResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "AblationComparisonResponse": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "baseline": {
+            "type": "string",
+            "title": "Baseline"
+          },
+          "ablations": {
+            "items": {
+              "$ref": "#/components/schemas/AblationRecord"
+            },
+            "type": "array",
+            "title": "Ablations"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "title",
+          "description",
+          "baseline",
+          "ablations"
+        ],
+        "title": "AblationComparisonResponse"
+      },
+      "AblationRecord": {
+        "properties": {
+          "config_name": {
+            "type": "string",
+            "title": "Config Name"
+          },
+          "architecture": {
+            "type": "string",
+            "title": "Architecture"
+          },
+          "checkpoint_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checkpoint File"
+          },
+          "epoch": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Epoch"
+          },
+          "val_loss": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Val Loss"
+          },
+          "parameters_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parameters Count"
+          },
+          "n_feats": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Feats"
+          },
+          "n_resgroups": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Resgroups"
+          },
+          "n_resblocks": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "N Resblocks"
+          },
+          "loss_weights": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "number"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loss Weights"
+          },
+          "psnr_db": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Psnr Db"
+          },
+          "ssim": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ssim"
+          },
+          "sam_degrees": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sam Degrees"
+          },
+          "downsample_consistency_mae": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Downsample Consistency Mae"
+          },
+          "spectral_mae": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spectral Mae"
+          },
+          "latency_median_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Median S"
+          },
+          "key_contribution": {
+            "type": "string",
+            "title": "Key Contribution"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "config_name",
+          "architecture",
+          "key_contribution"
+        ],
+        "title": "AblationRecord"
+      },
       "AsyncJobSubmitResponse": {
         "properties": {
           "status": {
@@ -2313,8 +2548,31 @@
             "title": "Active Jobs",
             "default": 0,
             "example": 0
+          },
+          "degraded": {
+            "type": "boolean",
+            "title": "Degraded",
+            "description": "True if zero models are loaded",
+            "default": false
+          },
+          "models": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Models",
+            "description": "Per-model status list"
           }
         },
+        "additionalProperties": true,
         "type": "object",
         "required": [
           "status",

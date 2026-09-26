@@ -13,7 +13,7 @@ export interface paths {
         };
         /**
          * Health
-         * @description Health check endpoint confirming API status, loaded models, and device.
+         * @description Health check endpoint confirming API status, per-model status, degraded state, and device.
          */
         get: operations["health_api_health_get"];
         put?: never;
@@ -567,10 +567,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/training/ablations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Ablation Comparison
+         * @description Surface the 6 scientific ablation configurations comparing loss functions,
+         *     architectural capacity, and physical constraints. Loads checkpoint metadata
+         *     directly from backend/weights/rcan_ablation_*.pth and verified test reports.
+         */
+        get: operations["get_ablation_comparison_api_training_ablations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AblationComparisonResponse */
+        AblationComparisonResponse: {
+            /** Title */
+            title: string;
+            /** Description */
+            description: string;
+            /** Baseline */
+            baseline: string;
+            /** Ablations */
+            ablations: components["schemas"]["AblationRecord"][];
+        } & {
+            [key: string]: unknown;
+        };
+        /** AblationRecord */
+        AblationRecord: {
+            /** Config Name */
+            config_name: string;
+            /** Architecture */
+            architecture: string;
+            /** Checkpoint File */
+            checkpoint_file?: string | null;
+            /** Epoch */
+            epoch?: number | null;
+            /** Val Loss */
+            val_loss?: number | null;
+            /** Parameters Count */
+            parameters_count?: number | null;
+            /** N Feats */
+            n_feats?: number | null;
+            /** N Resgroups */
+            n_resgroups?: number | null;
+            /** N Resblocks */
+            n_resblocks?: number | null;
+            /** Loss Weights */
+            loss_weights?: {
+                [key: string]: number;
+            } | null;
+            /** Psnr Db */
+            psnr_db?: number | null;
+            /** Ssim */
+            ssim?: number | null;
+            /** Sam Degrees */
+            sam_degrees?: number | null;
+            /** Downsample Consistency Mae */
+            downsample_consistency_mae?: number | null;
+            /** Spectral Mae */
+            spectral_mae?: number | null;
+            /** Latency Median S */
+            latency_median_s?: number | null;
+            /** Key Contribution */
+            key_contribution: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** AsyncJobSubmitResponse */
         AsyncJobSubmitResponse: {
             /** Status */
@@ -1048,6 +1124,21 @@ export interface components {
              * @example 0
              */
             active_jobs: number;
+            /**
+             * Degraded
+             * @description True if zero models are loaded
+             * @default false
+             */
+            degraded: boolean;
+            /**
+             * Models
+             * @description Per-model status list
+             */
+            models?: {
+                [key: string]: unknown;
+            }[] | null;
+        } & {
+            [key: string]: unknown;
         };
         /** JobListResponse */
         JobListResponse: {
@@ -2334,6 +2425,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_ablation_comparison_api_training_ablations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AblationComparisonResponse"];
                 };
             };
         };

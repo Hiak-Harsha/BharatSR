@@ -9,6 +9,9 @@ import torch
 import torch.nn as nn
 
 
+import torch.nn.functional as F
+
+
 class EnsembleSR(nn.Module):
     """
     Weighted ensemble of trained super-resolution models.
@@ -38,7 +41,11 @@ class EnsembleSR(nn.Module):
         var_list = []
 
         for m, w in zip(self.models, self.weights):
-            out = m(lr)
+            if m.__class__.__name__ == "SRCNN":
+                lr_in = F.interpolate(lr, scale_factor=self.scale_factor, mode="bicubic", align_corners=False)
+                out = m(lr_in)
+            else:
+                out = m(lr)
             if isinstance(out, tuple):
                 sr, lv = out
                 sr_list.append((sr, w))
@@ -49,11 +56,13 @@ class EnsembleSR(nn.Module):
         # Weighted reflectance average
         sr_ens = sum(sr * w for sr, w in sr_list)
 
-        if var_list and len(var_list) == len(self.models):
-            # Variance pooling across model predictions
-            var_ens = sum(var * w for var, w in var_list)
+        if var_list:
+            # Variance pooling across model predictions that output uncertainty
+            total_var_w = sum(w for _, w in var_list)
+            var_ens = sum(var * (w / total_var_w) for var, w in var_list)
             log_var_ens = torch.log(var_ens + 1e-7)
             log_var_ens = torch.clamp(log_var_ens, min=-6.0, max=6.0)
             return sr_ens, log_var_ens
 
         return sr_ens
+

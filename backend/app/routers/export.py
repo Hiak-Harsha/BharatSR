@@ -3,6 +3,7 @@ BharatSR — Export Router
 Provides authoritative GeoTIFF downloads and analytical verification report exports.
 """
 
+import re
 import json
 from pathlib import Path
 from typing import Optional
@@ -21,6 +22,17 @@ from backend.app.core.logging import get_logger
 
 logger = get_logger("bharatsr.export")
 router = APIRouter(tags=["export"])
+
+
+def _validate_safe_id(val: Optional[str], param_name: str = "id") -> Optional[str]:
+    """Ensure identifiers are strictly alphanumeric/underscore/hyphen without path traversal."""
+    if not val:
+        return val
+    clean = Path(val).name
+    if clean != val or not re.match(r"^[a-zA-Z0-9_-]+$", val):
+        raise HTTPException(status_code=404, detail=f"{param_name.capitalize()} '{val}' not found")
+    return val
+
 
 
 @router.get("/api/export/geotiff")
@@ -42,12 +54,20 @@ def export_geotiff(
     if not sample_id and not run_id:
         raise HTTPException(status_code=400, detail="Provide either 'sample_id' or 'run_id'")
 
+    sample_id = _validate_safe_id(sample_id, "sample")
+    run_id = _validate_safe_id(run_id, "run")
+
     runs_dir = Path(settings.runs_dir)
 
     if run_id:
-        run_path = runs_dir / f"{run_id}.npz"
+        run_path = (runs_dir / f"{run_id}.npz").resolve()
+        try:
+            run_path.relative_to(runs_dir.resolve())
+        except ValueError:
+            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
         if not run_path.exists():
             raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+
         data = np.load(str(run_path))
         sr_array = data["sr"].astype(np.float32)
         geo_json = str(data.get("geo_json", ""))
@@ -122,12 +142,20 @@ def export_report(
     if not sample_id and not run_id:
         raise HTTPException(status_code=400, detail="Provide either 'run_id' or 'sample_id'")
 
+    sample_id = _validate_safe_id(sample_id, "sample")
+    run_id = _validate_safe_id(run_id, "run")
+
     runs_dir = Path(settings.runs_dir)
 
     if run_id:
-        run_path = runs_dir / f"{run_id}.npz"
+        run_path = (runs_dir / f"{run_id}.npz").resolve()
+        try:
+            run_path.relative_to(runs_dir.resolve())
+        except ValueError:
+            raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
         if not run_path.exists():
             raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+
 
         data = np.load(str(run_path), allow_pickle=True)
         m_id = str(data.get("model_id", model_id))

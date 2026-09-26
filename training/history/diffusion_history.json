@@ -1,0 +1,25 @@
+{
+  "train_history": [
+    {
+      "epoch": 1,
+      "train_loss": 0.124,
+      "val_loss": 0.0951,
+      "val_psnr": 19.14,
+      "val_ssim": 0.6702,
+      "lr": 0.00015
+    },
+    {
+      "epoch": 2,
+      "train_loss": 0.0432,
+      "val_loss": 0.0567,
+      "val_psnr": 22.8,
+      "val_ssim": 0.7667,
+      "lr": 1e-06
+    }
+  ],
+  "final_metrics": {
+    "psnr_db": 22.8,
+    "ssim": 0.7667,
+    "val_loss": 0.0567
+  }
+}

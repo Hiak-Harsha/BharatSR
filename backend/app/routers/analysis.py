@@ -7,7 +7,9 @@ field boundary delineation, and bi-temporal change detection.
 import asyncio
 import base64
 import io
+import re
 from pathlib import Path
+
 from typing import Optional, Dict, Any
 
 import numpy as np
@@ -328,26 +330,40 @@ async def change_detection(
 
     def _sync_calc():
         def load_sr_data(target_id: str) -> np.ndarray:
-            p = runs_dir / f"{target_id}.npz"
-            if p.exists():
-                try:
+            clean_id = Path(target_id).name
+            if clean_id != target_id or not re.match(r"^[a-zA-Z0-9_-]+$", target_id):
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Target '{target_id}' not found in active runs or sample catalog.",
+                )
+            p = (runs_dir / f"{target_id}.npz").resolve()
+            try:
+                p.relative_to(runs_dir.resolve())
+                if p.exists():
                     d = np.load(str(p))
                     if "sr" in d:
                         return d["sr"].astype(np.float32)
-                except Exception as e:
-                    logger.warning(f"Error loading run {target_id}: {e}")
+            except Exception as e:
+                logger.warning(f"Error loading run {target_id}: {e}")
 
             # Fallback: check if target_id is a pre-loaded sample_id
-            sample_path = sample_tiles_dir / f"{target_id}.npz"
-            if sample_path.exists():
-                lr_img, hr_img, _ = load_input_data(target_id, None, sample_tiles_dir)
-                res = execute_model_sr("rcan", lr_img, hr_img, scale_factor=4)
-                return res.array.astype(np.float32)
+            sample_path = (sample_tiles_dir / f"{target_id}.npz").resolve()
+            try:
+                sample_path.relative_to(sample_tiles_dir.resolve())
+                if sample_path.exists():
+                    lr_img, hr_img, _ = load_input_data(target_id, None, sample_tiles_dir)
+                    res = execute_model_sr("rcan", lr_img, hr_img, scale_factor=4)
+                    return res.array.astype(np.float32)
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.warning(f"Error loading fallback sample {target_id}: {e}")
 
             raise HTTPException(
                 status_code=404,
                 detail=f"Target '{target_id}' not found in active runs or sample catalog.",
             )
+
 
         sr_t1 = load_sr_data(run_id_t1)
         sr_t2 = load_sr_data(run_id_t2)

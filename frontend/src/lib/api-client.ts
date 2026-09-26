@@ -165,13 +165,16 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   const headers = new Headers(options.headers || {});
   const timeoutMs = options.timeoutMs || 30000;
 
-  // Inject API key if configured
+  // Inject API key if configured (from localStorage or environment variable)
   if (typeof window !== "undefined") {
-    const key = localStorage.getItem("bharatsr_api_key");
+    const key =
+      localStorage.getItem("bharatsr_api_key") ||
+      process.env.NEXT_PUBLIC_BHARATSR_API_KEY;
     if (key && !headers.has("X-API-Key")) {
       headers.set("X-API-Key", key);
     }
   }
+
 
   // Setup AbortController for category-specific timeouts
   const controller = new AbortController();

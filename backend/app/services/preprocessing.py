@@ -17,6 +17,10 @@ import numpy as np
 from PIL import Image
 import torch
 import torch.nn.functional as F
+from backend.app.core.logging import get_logger
+
+logger = get_logger("bharatsr.preprocessing")
+
 
 BAND_INDEX: Dict[str, int] = {
     "B2": 0,
@@ -206,8 +210,9 @@ def load_image_from_bytes(
                 return img, geo_meta
     except ValueError:
         raise
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Rasterio decode attempted and fell back to standard image loader: {e}")
+
 
     # Fallback: Standard image formats (PNG, JPEG)
     try:
