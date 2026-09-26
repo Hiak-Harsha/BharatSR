@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "maplibre-gl/dist/maplibre-gl.css";
 import "./globals.css";
 import { QueryProvider } from "@/components/providers/QueryProvider";
+import { BootSplash } from "@/components/effects/BootSplash";
 
 export const metadata: Metadata = {
   title: "BharatSR — Physics-Constrained Satellite Super-Resolution",
@@ -17,7 +18,9 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className="bg-[var(--bsr-bg)] text-[var(--bsr-ink)] min-h-screen antialiased">
-        <QueryProvider>{children}</QueryProvider>
+        <QueryProvider>
+          <BootSplash>{children}</BootSplash>
+        </QueryProvider>
       </body>
     </html>
   );

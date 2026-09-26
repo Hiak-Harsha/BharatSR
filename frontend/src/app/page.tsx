@@ -105,14 +105,13 @@ export default function LandingPage() {
       <header className="relative px-6 pt-16 pb-10 overflow-hidden">
         <div className="bsr-hero-grid" />
 
-        {/* OrbitScene — background ambient layer */}
-        <div className="bsr-orbit-wrapper absolute inset-0 pointer-events-none" style={{ zIndex: 0 }}>
-          <OrbitScene />
-        </div>
-
         <div className="max-w-[1100px] mx-auto relative" style={{ zIndex: 1 }}>
           <div className="flex flex-col lg:flex-row items-center justify-between gap-10">
-            <div className="w-full lg:w-1/2 flex flex-col gap-4">
+            <div className="w-full lg:w-1/2 flex flex-col gap-4 relative">
+              {/* OrbitScene — scoped to left text column only */}
+              <div className="bsr-orbit-wrapper absolute inset-0 -z-10 pointer-events-none overflow-visible">
+                <OrbitScene />
+              </div>
               <div className="text-[11px] tracking-[.16em] uppercase" style={{ color: "var(--bsr-phosphor)" }}>
                 SIH26142 · NTRO · Space Technology
               </div>
@@ -142,8 +141,8 @@ export default function LandingPage() {
             </div>
 
             {/* HERO PIXEL DISSOLVE SHOWCASE */}
-            <div className="w-full lg:w-1/2 max-w-[460px] shrink-0">
-              <div className="p-3.5 rounded-2xl border border-zinc-800 bg-zinc-950/90 backdrop-blur-md shadow-[0_0_50px_rgba(245,158,11,0.15)]">
+            <div className="w-full lg:w-5/12 max-w-[360px] shrink-0">
+              <div className="p-3 rounded-2xl border border-zinc-800 bg-zinc-950/90 backdrop-blur-md shadow-[0_0_30px_rgba(245,158,11,0.12)]">
                 <div className="flex items-center justify-between px-1 pb-2 text-[11px] font-mono">
                   <span className="text-amber-400 font-bold flex items-center gap-1.5">
                     <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
