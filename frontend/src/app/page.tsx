@@ -52,7 +52,7 @@ export default function LandingPage() {
       caption: "Raw LR Input",
       sub: "10m GSD",
       src: preview?.views.lr || "/samples/lr.png",
-      detail: "Karnataka Bellary · 2024-01-15",
+      detail: "Punjab Amritsar · 2024-08-01",
       pixelated: true,
     },
     {
@@ -175,7 +175,7 @@ export default function LandingPage() {
           <div className="text-[11px] tracking-[.14em] uppercase" style={{ color: "var(--bsr-indigo)" }}>01 · Optical Resolution &amp; The Gap</div>
           <h2 className="text-2xl my-2 mb-4">Comparative Benchmark Products</h2>
           <p className="text-sm mb-6 max-w-[700px]" style={{ color: "var(--bsr-ink-dim)" }}>
-            Same Sentinel-2 tile from Karnataka Bellary mining region, processed through four perspectives.
+            Same Sentinel-2 tile from Punjab Amritsar agricultural corridor, processed through four perspectives.
             Hover each panel to see the full-frame pixel dissolve — raw sensor blocks resolve into analytical clarity.
           </p>
 

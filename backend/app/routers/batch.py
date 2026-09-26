@@ -140,7 +140,7 @@ async def batch_superresolve(
         "created_at": datetime.utcnow().isoformat(),
     }
     batch_path = runs_dir / f"{batch_id}.json"
-    with open(batch_path, "w") as bf:
+    with open(batch_path, "w", encoding="utf-8") as bf:
         json.dump(batch_manifest, bf)
 
     return JSONResponse(
@@ -165,7 +165,7 @@ def get_batch_status(
     batch_path = runs_dir / f"{batch_id}.json"
     if not batch_path.exists():
         raise HTTPException(status_code=404, detail=f"Batch '{batch_id}' not found")
-    with open(batch_path) as bf:
+    with open(batch_path, "r", encoding="utf-8") as bf:
         manifest = json.load(bf)
 
     job_statuses = []

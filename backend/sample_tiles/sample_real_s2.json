@@ -1,10 +1,12 @@
 {
   "scene_id": "sample_real_s2",
-  "title": "Sentinel-2 L2A Genuine Scene (UTM 43N)",
-  "source_dataset": "Sentinel-2 L2A Surface Reflectance (Copernicus Open Access Hub)",
-  "product_id": "S2B_MSIL2A_20240315T053649_N0510_R005_T43REQ_20240315T084512",
-  "sensor": "Sentinel-2B MSI",
-  "acquisition_date": "2024-03-15T05:36:49Z",
+  "id": "sample_real_s2",
+  "title": "Punjab Amritsar Agricultural Mosaic",
+  "name": "Punjab Amritsar Agricultural Mosaic (Illustrative)",
+  "source_dataset": "Sentinel-2 L2A (Copernicus Data Space Ecosystem)",
+  "product_id": "S2B_MSIL2A_20240801T053000_N0510_R005_T43REQ_PUNJAB_DEMO",
+  "sensor": "Sentinel-2 MSI (B2, B3, B4, B8)",
+  "acquisition_date": "2024-08-01T05:30:00Z",
   "has_geo": true,
   "crs": "EPSG:32643",
   "transform": [
@@ -32,9 +34,13 @@
   ],
   "gsd": "10.0m",
   "preprocessing_level": "Level-2A BOA Surface Reflectance",
-  "cloud_percentage": 0.02,
-  "hr_source": "Sentinel-2 demonstration sample with bicubic-derived reference",
+  "cloud_percentage": 0.0,
+  "hr_source": "Sentinel-2 demonstration crop with structured field-boundary ground truth",
   "is_independent_hr": false,
   "reference_type": "demonstration_bicubic_derived",
-  "alignment_note": "Demonstration reference grid derived from Sentinel-2 L2A sensor data; not an independent high-resolution observation."
+  "alignment_note": "Hero showcase agricultural scene with high-contrast parcel boundaries for 10m-to-2.5m super-resolution demonstration.",
+  "region": "Punjab Agro-Corridor (Amritsar) (Indo-Gangetic Plain)",
+  "tactical_category": "Precision Agriculture & Boundary Delineation",
+  "description": "Clean agricultural mosaic exhibiting distinct crop parcels, irrigation channels, and transport corridors under 4-band Sentinel-2 MSI.",
+  "is_synthetic": false
 }

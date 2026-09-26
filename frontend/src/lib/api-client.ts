@@ -245,11 +245,11 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 // -------------------------------------------------------------
 
 export async function fetchHealth(): Promise<HealthResponse> {
-  return request<HealthResponse>("/api/health", { cache: "no-store", timeoutMs: 10000 });
+  return request<HealthResponse>("/api/health", { cache: "no-store", timeoutMs: 60000 });
 }
 
 export async function fetchModels(): Promise<ModelInfo[]> {
-  const data = await request<components["schemas"]["ModelsListResponse"]>("/api/models", { cache: "no-store", timeoutMs: 10000 });
+  const data = await request<components["schemas"]["ModelsListResponse"]>("/api/models", { cache: "no-store", timeoutMs: 60000 });
   return data.models;
 }
 
@@ -260,7 +260,7 @@ export async function reloadModel(modelId: string, checkpointPath?: string): Pro
   return request<ModelReloadResponse>("/api/models/reload", {
     method: "POST",
     body: form,
-    timeoutMs: 30000,
+    timeoutMs: 60000,
   });
 }
 
@@ -269,14 +269,14 @@ export async function reloadModel(modelId: string, checkpointPath?: string): Pro
 // -------------------------------------------------------------
 
 export async function fetchSamples(): Promise<SampleInfo[]> {
-  const data = await request<components["schemas"]["SamplesListResponse"]>("/api/samples", { cache: "no-store", timeoutMs: 10000 });
+  const data = await request<components["schemas"]["SamplesListResponse"]>("/api/samples", { cache: "no-store", timeoutMs: 60000 });
   return data.samples;
 }
 
 export async function getSamplePreview(sampleId: string, crop: number = 32): Promise<SamplePreviewResponse> {
   return request<SamplePreviewResponse>(
     `/api/samples/${encodeURIComponent(sampleId)}/preview?crop=${crop}`,
-    { cache: "no-store", timeoutMs: 15000 }
+    { cache: "no-store", timeoutMs: 60000 }
   );
 }
 
@@ -334,7 +334,7 @@ export async function submitAsyncSuperresolve({
   return request<AsyncJobSubmitResponse>("/api/superresolve/async", {
     method: "POST",
     body: form,
-    timeoutMs: 15000,
+    timeoutMs: 60000,
   });
 }
 

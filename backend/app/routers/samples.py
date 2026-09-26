@@ -52,7 +52,7 @@ def _load_samples_sync(sample_dir_path: str) -> List[SampleInfo]:
             sidecar = {}
             if sidecar_file.exists():
                 try:
-                    with open(sidecar_file, "r") as sf:
+                    with open(sidecar_file, "r", encoding="utf-8") as sf:
                         sidecar = json.load(sf)
                 except Exception as e:
                     logger.warning(f"Error parsing sidecar json for sample {f.stem}: {e}")

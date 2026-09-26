@@ -313,6 +313,16 @@ docker-compose up --build
 - **Backend API:** `http://localhost:8000`
 - **Frontend Dashboard:** `http://localhost:3000`
 
+### Keep-Alive for Render Free Tier
+
+Render's free tier spins web services down after ~15 minutes of inactivity. A GitHub Actions workflow (`.github/workflows/keep-alive.yml`) pings the backend health endpoint every 10 minutes to prevent cold-start latency for visitors.
+
+**Required setup:**
+1. Add a GitHub repository secret named `BHARATSR_BACKEND_HEALTH_URL` with the value `https://<your-service>.onrender.com/api/health`
+2. The workflow runs automatically on a 10-minute cron schedule and can also be triggered manually via `workflow_dispatch`
+
+> **Optional additional layer:** An external uptime monitor (e.g., [UptimeRobot](https://uptimerobot.com/)) pinging the same `/api/health` URL every 5 minutes provides alerting and redundancy beyond what a bare cron job offers.
+
 ---
 
 ## 11. Packaging & Submission Tool

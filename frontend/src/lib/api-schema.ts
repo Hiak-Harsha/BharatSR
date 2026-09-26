@@ -1694,9 +1694,7 @@ export interface operations {
     superresolve_api_superresolve_post: {
         parameters: {
             query?: never;
-            header?: {
-                "X-API-Key"?: string | null;
-            };
+            header?: never;
             path?: never;
             cookie?: never;
         };
@@ -1729,9 +1727,7 @@ export interface operations {
     superresolve_async_api_superresolve_async_post: {
         parameters: {
             query?: never;
-            header?: {
-                "X-API-Key"?: string | null;
-            };
+            header?: never;
             path?: never;
             cookie?: never;
         };
@@ -1764,9 +1760,7 @@ export interface operations {
     compare_api_compare_post: {
         parameters: {
             query?: never;
-            header?: {
-                "X-API-Key"?: string | null;
-            };
+            header?: never;
             path?: never;
             cookie?: never;
         };
@@ -1949,9 +1943,7 @@ export interface operations {
     batch_superresolve_api_batch_post: {
         parameters: {
             query?: never;
-            header?: {
-                "X-API-Key"?: string | null;
-            };
+            header?: never;
             path?: never;
             cookie?: never;
         };

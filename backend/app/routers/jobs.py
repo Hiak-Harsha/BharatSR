@@ -41,8 +41,16 @@ def get_job_status(job_id: str, store: JobStore = Depends(get_job_store)):
         result_file = Path(job["result_path"])
         if result_file.exists():
             try:
-                with open(result_file, "r") as f:
-                    response_data["result"] = json.load(f)
+                if result_file.suffix == ".json":
+                    with open(result_file, "r", encoding="utf-8") as f:
+                        response_data["result"] = json.load(f)
+                elif result_file.suffix == ".npz":
+                    companion = result_file.with_name(f"{result_file.stem}_result.json")
+                    if companion.exists():
+                        with open(companion, "r", encoding="utf-8") as f:
+                            response_data["result"] = json.load(f)
+                    else:
+                        logger.info(f"Result file is array-only .npz: {result_file}")
             except Exception as e:
                 logger.warning(f"Failed to load cached result from {result_file}: {e}")
                 response_data["error_message"] = f"Failed to load cached result: {e}"

@@ -96,7 +96,7 @@ def load_input_data(
         geo_metadata = None
         if sidecar_path.exists():
             try:
-                with open(sidecar_path, "r") as f:
+                with open(sidecar_path, "r", encoding="utf-8") as f:
                     sidecar = json.load(f)
                     if sidecar.get("has_geo", False):
                         geo_metadata = sidecar
@@ -281,10 +281,56 @@ def async_worker(
             sample_id=sample_id or "",
         )
 
+        # Build full JSON response for jobs endpoint
+        bicubic_sr, _ = run_bicubic_baseline(lr_image, scale_factor=4)
+        bic_views = generate_multi_spectral_views(bicubic_sr)
+        input_views = generate_multi_spectral_views(lr_image)
+
+        full_payload = {
+            "status": "success",
+            "model_id": model_id,
+            "run_id": job_id,
+            "quality": result.response_dict.get("quality", quality),
+            "inference_time_s": result.response_dict.get("inference_time_s", float(result.latency)),
+            "input": {
+                "shape": list(lr_image.shape),
+                "image": input_views.get("rgb", ""),
+                "views": input_views,
+            },
+            "bicubic": {
+                "shape": list(bicubic_sr.shape),
+                "image": bic_views.get("rgb", ""),
+                "views": bic_views,
+            },
+            "output": {
+                "shape": result.response_dict["shape"],
+                "image": result.response_dict["image"],
+                "views": result.response_dict["views"],
+            },
+            "metrics": result.metrics,
+        }
+        if result.response_dict.get("uncertainty"):
+            full_payload["uncertainty"] = result.response_dict["uncertainty"]
+        if result.response_dict.get("error_map"):
+            full_payload["error_map"] = result.response_dict["error_map"]
+        if hr_image is not None:
+            gt_views = generate_multi_spectral_views(hr_image)
+            full_payload["ground_truth"] = {
+                "shape": list(hr_image.shape),
+                "image": gt_views.get("rgb", ""),
+                "views": gt_views,
+            }
+        if geo_metadata:
+            full_payload["geospatial_metadata"] = geo_metadata
+
+        result_json_file = runs_dir / f"{job_id}_result.json"
+        with open(result_json_file, "w", encoding="utf-8") as jf:
+            json.dump(full_payload, jf)
+
         job_store.update_job(
             job_id,
             status="completed",
-            result_path=str(run_file),
+            result_path=str(result_json_file),
             metrics=result.metrics,
             inference_time=result.latency,
             progress_pct=100,
