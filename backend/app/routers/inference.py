@@ -48,7 +48,8 @@ from backend.app.services.sr_pipeline import (
     async_worker,
     mask_to_png_bytes,
 )
-from backend.app.models_ml.uncertainty import generate_uncertainty_heatmap
+from backend.app.models_ml.uncertainty import generate_uncertainty_heatmap, generate_grayscale_difference_png
+from backend.app.core.json_utils import sanitize_for_json
 from evaluation.downstream_task import (
     segment_micro_canopy_rule_based,
     segment_built_up_rule_based,
@@ -101,7 +102,9 @@ def _run_superresolve_sync(
     if hr_image is not None:
         bic_err = np.mean(np.abs(bicubic_sr.astype(np.float32) - hr_image.astype(np.float32)), axis=0)
         bic_err_bytes = generate_uncertainty_heatmap(bic_err, colormap="plasma")
+        bic_raw_bytes = generate_grayscale_difference_png(bic_err)
         bic_views["error"] = f"data:image/png;base64,{base64.b64encode(bic_err_bytes).decode('utf-8')}"
+        bic_views["error_raw"] = f"data:image/png;base64,{base64.b64encode(bic_raw_bytes).decode('utf-8')}"
 
     input_views = generate_multi_spectral_views(lr_image)
 
@@ -167,35 +170,53 @@ async def superresolve(
     Returns 4x SR result as base64 PNG, multi-spectral views, physical metrics,
     and predicted uncertainty map.
     """
-    if model_id not in ALLOWED_MODELS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid model_id '{model_id}'. Allowed: {', '.join(ALLOWED_MODELS)}",
+    try:
+        if model_id not in ALLOWED_MODELS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid model_id '{model_id}'. Allowed: {', '.join(ALLOWED_MODELS)}",
+            )
+        if quality not in ("fast", "high"):
+            raise HTTPException(status_code=400, detail="Invalid quality. Allowed: fast, high")
+
+        file_bytes = await read_uploaded_file_capped(file, settings.max_image_bytes)
+        sample_tiles_dir = Path(settings.sample_tiles_dir)
+        lr_image, hr_image, geo_metadata = load_input_data(sample_id, file_bytes, sample_tiles_dir)
+
+        model_meta = registry.get_metadata(model_id) or {}
+        scale_factor = model_meta.get("scale_factor", 4)
+        runs_dir = Path(settings.runs_dir)
+        runs_dir.mkdir(parents=True, exist_ok=True)
+
+        # Async correctness: offload CPU PyTorch & metric calculations to threadpool
+        response = await asyncio.to_thread(
+            _run_superresolve_sync,
+            model_id,
+            lr_image,
+            hr_image,
+            geo_metadata,
+            scale_factor,
+            quality,
+            runs_dir,
         )
-    if quality not in ("fast", "high"):
-        raise HTTPException(status_code=400, detail="Invalid quality. Allowed: fast, high")
-
-    file_bytes = await read_uploaded_file_capped(file, settings.max_image_bytes)
-    sample_tiles_dir = Path(settings.sample_tiles_dir)
-    lr_image, hr_image, geo_metadata = load_input_data(sample_id, file_bytes, sample_tiles_dir)
-
-    model_meta = registry.get_metadata(model_id) or {}
-    scale_factor = model_meta.get("scale_factor", 4)
-    runs_dir = Path(settings.runs_dir)
-    runs_dir.mkdir(parents=True, exist_ok=True)
-
-    # Async correctness: offload CPU PyTorch & metric calculations to threadpool
-    response = await asyncio.to_thread(
-        _run_superresolve_sync,
-        model_id,
-        lr_image,
-        hr_image,
-        geo_metadata,
-        scale_factor,
-        quality,
-        runs_dir,
-    )
-    return JSONResponse(content=response)
+        return JSONResponse(content=sanitize_for_json(response))
+    except HTTPException:
+        raise
+    except (ValueError, TypeError, KeyError) as e:
+        logger.warning(f"Validation error in superresolve: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Inference execution failed in superresolve: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "error": "InferenceExecutionError",
+                "detail": f"Inference failed while processing this scene: {type(e).__name__} - {str(e)}",
+                "error_type": type(e).__name__,
+                "message": str(e),
+            },
+        )
 
 
 @router.post(
@@ -216,40 +237,28 @@ async def superresolve_async(
     Submit super-resolution as an asynchronous background task.
     Returns job_id and status checking URL.
     """
-    if model_id not in ALLOWED_MODELS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid model_id '{model_id}'. Allowed: {', '.join(ALLOWED_MODELS)}",
-        )
-    if quality not in ("fast", "high"):
-        raise HTTPException(status_code=400, detail="Invalid quality. Allowed: fast, high")
+    try:
+        if model_id not in ALLOWED_MODELS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid model_id '{model_id}'. Allowed: {', '.join(ALLOWED_MODELS)}",
+            )
+        if quality not in ("fast", "high"):
+            raise HTTPException(status_code=400, detail="Invalid quality. Allowed: fast, high")
 
-    file_bytes = await read_uploaded_file_capped(file, settings.max_image_bytes)
-    if not sample_id and not file_bytes:
-        raise HTTPException(status_code=400, detail="Provide 'file' or 'sample_id'")
+        file_bytes = await read_uploaded_file_capped(file, settings.max_image_bytes)
+        if not sample_id and not file_bytes:
+            raise HTTPException(status_code=400, detail="Provide 'file' or 'sample_id'")
 
-    job_id = store.create_job(model_id=model_id)
-    runs_dir = Path(settings.runs_dir)
-    runs_dir.mkdir(parents=True, exist_ok=True)
-    sample_tiles_dir = Path(settings.sample_tiles_dir)
+        job_id = store.create_job(model_id=model_id)
+        runs_dir = Path(settings.runs_dir)
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        sample_tiles_dir = Path(settings.sample_tiles_dir)
 
-    loop = asyncio.get_event_loop()
-    if pool is not None:
-        loop.run_in_executor(
-            pool,
-            async_worker,
-            job_id,
-            sample_id,
-            file_bytes,
-            model_id,
-            quality,
-            store,
-            runs_dir,
-            sample_tiles_dir,
-        )
-    else:
-        asyncio.create_task(
-            asyncio.to_thread(
+        loop = asyncio.get_event_loop()
+        if pool is not None:
+            loop.run_in_executor(
+                pool,
                 async_worker,
                 job_id,
                 sample_id,
@@ -260,14 +269,44 @@ async def superresolve_async(
                 runs_dir,
                 sample_tiles_dir,
             )
-        )
+        else:
+            asyncio.create_task(
+                asyncio.to_thread(
+                    async_worker,
+                    job_id,
+                    sample_id,
+                    file_bytes,
+                    model_id,
+                    quality,
+                    store,
+                    runs_dir,
+                    sample_tiles_dir,
+                )
+            )
 
-    return AsyncJobSubmitResponse(
-        status="accepted",
-        job_id=job_id,
-        model_id=model_id,
-        status_url=f"/api/jobs/{job_id}",
-    )
+        return AsyncJobSubmitResponse(
+            status="accepted",
+            job_id=job_id,
+            model_id=model_id,
+            status_url=f"/api/jobs/{job_id}",
+        )
+    except HTTPException:
+        raise
+    except (ValueError, TypeError, KeyError) as e:
+        logger.warning(f"Validation error in superresolve_async: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Job submission failed in superresolve_async: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "error": "JobSubmissionError",
+                "detail": f"Failed to submit asynchronous job: {type(e).__name__} - {str(e)}",
+                "error_type": type(e).__name__,
+                "message": str(e),
+            },
+        )
 
 
 def _run_compare_sync(
@@ -398,21 +437,39 @@ async def compare(
     """
     Rigorous multi-model benchmark: Bicubic Baseline vs SRCNN vs RCAN side-by-side.
     """
-    file_bytes = await read_uploaded_file_capped(file, settings.max_image_bytes)
-    sample_tiles_dir = Path(settings.sample_tiles_dir)
-    lr_image, hr_image, geo_metadata = load_input_data(sample_id, file_bytes, sample_tiles_dir)
-    runs_dir = Path(settings.runs_dir)
-    runs_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        file_bytes = await read_uploaded_file_capped(file, settings.max_image_bytes)
+        sample_tiles_dir = Path(settings.sample_tiles_dir)
+        lr_image, hr_image, geo_metadata = load_input_data(sample_id, file_bytes, sample_tiles_dir)
+        runs_dir = Path(settings.runs_dir)
+        runs_dir.mkdir(parents=True, exist_ok=True)
 
-    response = await asyncio.to_thread(
-        _run_compare_sync,
-        lr_image,
-        hr_image,
-        geo_metadata,
-        registry,
-        runs_dir,
-    )
-    return JSONResponse(content=response)
+        response = await asyncio.to_thread(
+            _run_compare_sync,
+            lr_image,
+            hr_image,
+            geo_metadata,
+            registry,
+            runs_dir,
+        )
+        return JSONResponse(content=sanitize_for_json(response))
+    except HTTPException:
+        raise
+    except (ValueError, TypeError, KeyError) as e:
+        logger.warning(f"Validation error in compare: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Comparison execution failed: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "error": "ComparisonExecutionError",
+                "detail": f"Multi-model comparison failed: {type(e).__name__} - {str(e)}",
+                "error_type": type(e).__name__,
+                "message": str(e),
+            },
+        )
 
 
 def _run_pixel_profile_sync(
@@ -571,17 +628,37 @@ async def pixel_profile(
     runs_dir = Path(settings.runs_dir)
     sample_tiles_dir = Path(settings.sample_tiles_dir)
 
-    return await asyncio.to_thread(
-        _run_pixel_profile_sync,
-        sample_id,
-        run_id,
-        x,
-        y,
-        model_id,
-        runs_dir,
-        sample_tiles_dir,
-        registry,
-    )
+    try:
+        res = await asyncio.to_thread(
+            _run_pixel_profile_sync,
+            sample_id,
+            run_id,
+            x,
+            y,
+            model_id,
+            runs_dir,
+            sample_tiles_dir,
+            registry,
+        )
+        dumped = res.model_dump() if hasattr(res, "model_dump") else res
+        return JSONResponse(content=sanitize_for_json(dumped))
+    except HTTPException:
+        raise
+    except (ValueError, TypeError, KeyError) as e:
+        logger.warning(f"Validation error in pixel_profile: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Pixel profile extraction failed: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "error": "PixelProfileError",
+                "detail": f"Pixel profile extraction failed: {type(e).__name__} - {str(e)}",
+                "error_type": type(e).__name__,
+                "message": str(e),
+            },
+        )
 
 
 def _run_downstream_masks_sync(
@@ -690,12 +767,32 @@ async def downstream_masks(
     runs_dir = Path(settings.runs_dir)
     sample_tiles_dir = Path(settings.sample_tiles_dir)
 
-    return await asyncio.to_thread(
-        _run_downstream_masks_sync,
-        sample_id,
-        run_id,
-        model_id,
-        runs_dir,
-        sample_tiles_dir,
-        registry,
-    )
+    try:
+        res = await asyncio.to_thread(
+            _run_downstream_masks_sync,
+            sample_id,
+            run_id,
+            model_id,
+            runs_dir,
+            sample_tiles_dir,
+            registry,
+        )
+        dumped = res.model_dump() if hasattr(res, "model_dump") else res
+        return JSONResponse(content=sanitize_for_json(dumped))
+    except HTTPException:
+        raise
+    except (ValueError, TypeError, KeyError) as e:
+        logger.warning(f"Validation error in downstream_masks: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Downstream masks execution failed: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "error": "DownstreamMasksError",
+                "detail": f"Downstream masks analysis failed: {type(e).__name__} - {str(e)}",
+                "error_type": type(e).__name__,
+                "message": str(e),
+            },
+        )

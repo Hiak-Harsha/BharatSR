@@ -36,6 +36,7 @@ from backend.app.services.inference import ModelRegistry
 from backend.app.services.preprocessing import compute_spectral_indices, indices_to_visualizations
 from backend.app.services.sr_pipeline import load_input_data, execute_model_sr
 from backend.app.core.logging import get_logger
+from backend.app.core.json_utils import sanitize_for_json
 
 logger = get_logger("bharatsr.analysis")
 router = APIRouter(tags=["analysis"])
@@ -98,9 +99,27 @@ async def compute_indices(
             }
         return {"status": "success", "indices": index_stats}
 
-    file_bytes = await read_uploaded_file_capped(file, settings.max_image_bytes)
-    res = await asyncio.to_thread(_sync_calc)
-    return JSONResponse(content=res)
+    try:
+        file_bytes = await read_uploaded_file_capped(file, settings.max_image_bytes)
+        res = await asyncio.to_thread(_sync_calc)
+        return JSONResponse(content=sanitize_for_json(res))
+    except HTTPException:
+        raise
+    except (ValueError, TypeError, KeyError) as e:
+        logger.warning(f"Validation error in compute_indices: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Spectral indices computation failed: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "error": "IndicesComputationError",
+                "detail": f"Spectral indices computation failed: {type(e).__name__} - {str(e)}",
+                "error_type": type(e).__name__,
+                "message": str(e),
+            },
+        )
 
 
 @router.post(
@@ -220,8 +239,26 @@ async def crop_health_analysis(
             "class_legend": {str(k): v for k, v in CLASS_LABELS.items()},
         }
 
-    res = await asyncio.to_thread(_sync_calc)
-    return JSONResponse(content=res)
+    try:
+        res = await asyncio.to_thread(_sync_calc)
+        return JSONResponse(content=sanitize_for_json(res))
+    except HTTPException:
+        raise
+    except (ValueError, TypeError, KeyError) as e:
+        logger.warning(f"Validation error in crop_health: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Crop health analysis failed: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "error": "CropHealthError",
+                "detail": f"Crop health analysis failed: {type(e).__name__} - {str(e)}",
+                "error_type": type(e).__name__,
+                "message": str(e),
+            },
+        )
 
 
 @router.post(
@@ -306,8 +343,26 @@ async def field_boundary_delineation(
             "method": method,
         }
 
-    res = await asyncio.to_thread(_sync_calc)
-    return JSONResponse(content=res)
+    try:
+        res = await asyncio.to_thread(_sync_calc)
+        return JSONResponse(content=sanitize_for_json(res))
+    except HTTPException:
+        raise
+    except (ValueError, TypeError, KeyError) as e:
+        logger.warning(f"Validation error in field_boundary: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Field boundary delineation failed: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "error": "FieldBoundaryError",
+                "detail": f"Field boundary delineation failed: {type(e).__name__} - {str(e)}",
+                "error_type": type(e).__name__,
+                "message": str(e),
+            },
+        )
 
 
 @router.post(
@@ -424,5 +479,23 @@ async def change_detection(
             "disclaimer": "Spectral change analysis. Verify with ground truth for agronomic decisions.",
         }
 
-    res = await asyncio.to_thread(_sync_calc)
-    return JSONResponse(content=res)
+    try:
+        res = await asyncio.to_thread(_sync_calc)
+        return JSONResponse(content=sanitize_for_json(res))
+    except HTTPException:
+        raise
+    except (ValueError, TypeError, KeyError) as e:
+        logger.warning(f"Validation error in change_detection: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception(f"Change detection failed: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "error": "ChangeDetectionError",
+                "detail": f"Change detection failed: {type(e).__name__} - {str(e)}",
+                "error_type": type(e).__name__,
+                "message": str(e),
+            },
+        )

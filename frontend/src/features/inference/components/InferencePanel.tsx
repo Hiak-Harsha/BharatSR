@@ -7,6 +7,7 @@ import { useJobPolling } from "@/features/jobs/hooks/useJobPolling";
 import { submitAsyncSuperresolve, SuperResolveResponse } from "@/lib/api-client";
 import { useConsoleStore } from "@/lib/store";
 import { ImageComparisonSlider } from "@/components/ui/ImageComparisonSlider";
+import { DifferenceAnalysisPanel } from "./DifferenceAnalysisPanel";
 import { PixelProfileChart } from "@/components/charts/PixelProfileChart";
 import { UncertaintyScatterChart } from "@/components/charts/UncertaintyScatterChart";
 import { GeospatialViewer } from "@/components/map/GeospatialViewer";
@@ -345,12 +346,20 @@ export function InferencePanel({ className }: { className?: string }) {
                 afterViews={output.views}
                 groundTruthSrc={groundTruth?.image}
                 groundTruthViews={groundTruth?.views}
-                uncertaintySrc={uncertainty?.image}
-                errorMapSrc={errorMap?.image}
                 beforeLabel="Low-Resolution Input (10m)"
                 afterLabel={`BharatSR (${srResult.model_id.toUpperCase()} 2.5m-equivalent SR grid)`}
                 inspectedPoint={inspectedPoint}
                 onInspectPixel={handlePixelClick}
+                imageDimensions={dimensions}
+              />
+
+              {/* Modular Navigable Difference & Uncertainty Analysis (Part D) */}
+              <DifferenceAnalysisPanel
+                errorMap={errorMap}
+                uncertainty={uncertainty}
+                hasGroundTruth={Boolean(groundTruth?.image)}
+                onInspectPixel={handlePixelClick}
+                inspectedPoint={inspectedPoint}
                 imageDimensions={dimensions}
               />
 
@@ -424,12 +433,8 @@ export function InferencePanel({ className }: { className?: string }) {
               </div>
 
               {/* Pointwise Pixel Profile Inspector */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div className="w-full">
                 <PixelProfileChart data={pixelProfile ?? null} isLoading={isProfiling} />
-                <UncertaintyScatterChart
-                  scatter={uncertainty?.scatter}
-                  summary={uncertainty?.summary}
-                />
               </div>
 
               {/* Interactive Geospatial Viewer (if georeferenced) */}

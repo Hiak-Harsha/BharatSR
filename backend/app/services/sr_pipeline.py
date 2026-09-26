@@ -31,7 +31,7 @@ from backend.app.services.preprocessing import (
     generate_multi_spectral_views,
 )
 from backend.app.services.postprocessing import compute_inference_metrics
-from backend.app.models_ml.uncertainty import generate_uncertainty_heatmap, summarize_uncertainty
+from backend.app.models_ml.uncertainty import generate_uncertainty_heatmap, generate_grayscale_difference_png, summarize_uncertainty
 from backend.app.core.logging import get_logger
 
 logger = get_logger("bharatsr.pipeline")
@@ -179,13 +179,26 @@ def execute_model_sr(
     error_dict = None
     if hr_image is not None:
         error_map = np.mean(np.abs(sr_image.astype(np.float32) - hr_image.astype(np.float32)), axis=0)
-        err_bytes = generate_uncertainty_heatmap(error_map, colormap="plasma")
-        err_b64 = f"data:image/png;base64,{base64.b64encode(err_bytes).decode('utf-8')}"
-        views["error"] = err_b64
+        err_heatmap_bytes = generate_uncertainty_heatmap(error_map, colormap="plasma")
+        err_raw_bytes = generate_grayscale_difference_png(error_map)
+
+        err_heatmap_b64 = f"data:image/png;base64,{base64.b64encode(err_heatmap_bytes).decode('utf-8')}"
+        err_raw_b64 = f"data:image/png;base64,{base64.b64encode(err_raw_bytes).decode('utf-8')}"
+
+        views["error"] = err_heatmap_b64
+        views["error_raw"] = err_raw_b64
+
+        max_err = round(float(np.max(error_map)), 5)
+        mean_err = round(float(np.mean(error_map)), 5)
+        min_err = round(float(np.min(error_map)), 5)
         error_dict = {
-            "image": err_b64,
-            "mean_error": round(float(np.mean(error_map)), 5),
-            "max_error": round(float(np.max(error_map)), 5),
+            "image": err_raw_b64,  # Grayscale raw difference is primary
+            "image_raw": err_raw_b64,
+            "image_heatmap": err_heatmap_b64,
+            "mean_error": mean_err,
+            "max_error": max_err,
+            "min_error": min_err,
+            "normalization": f"linear 0.0 to {max_err} mapped to [0, 255] grayscale",
         }
 
     if uncertainty_map is not None:
@@ -204,13 +217,24 @@ def execute_model_sr(
             u_sub = u_map[::sy, ::sx].flatten().astype(float)
             e_sub = error_map[::sy, ::sx].flatten().astype(float)
             n_pts = min(len(u_sub), len(e_sub), 64)
-            scatter_points = [
-                {"unc": round(float(u_sub[i]), 4), "err": round(float(e_sub[i]), 4)}
-                for i in range(n_pts)
-            ]
-            corr_val = float(np.corrcoef(u_sub[:n_pts], e_sub[:n_pts])[0, 1]) if n_pts > 2 else 0.0
+            scatter_points = []
+            for i in range(n_pts):
+                u_val = float(u_sub[i])
+                e_val = float(e_sub[i])
+                if not (np.isnan(u_val) or np.isinf(u_val) or np.isnan(e_val) or np.isinf(e_val)):
+                    scatter_points.append({"unc": round(u_val, 4), "err": round(e_val, 4)})
+
+            corr_val = 0.0
+            if len(scatter_points) > 2:
+                try:
+                    c = float(np.corrcoef(u_sub[:n_pts], e_sub[:n_pts])[0, 1])
+                    if not (np.isnan(c) or np.isinf(c)):
+                        corr_val = round(c, 4)
+                except Exception:
+                    corr_val = 0.0
+
             uncertainty_dict["scatter"] = {
-                "correlation": round(corr_val if not np.isnan(corr_val) else 0.0, 4),
+                "correlation": corr_val,
                 "points": scatter_points,
             }
 

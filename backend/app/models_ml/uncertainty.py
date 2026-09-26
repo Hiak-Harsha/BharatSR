@@ -50,6 +50,26 @@ def generate_uncertainty_heatmap(
     return buf.getvalue()
 
 
+def generate_grayscale_difference_png(diff_map: np.ndarray) -> bytes:
+    """
+    Render an uncolored, single-channel grayscale magnitude difference PNG.
+    Normalizes linearly [0, max(diff_map)] to [0, 255] with no colormap applied.
+    """
+    if diff_map.ndim == 3:
+        diff_map = np.mean(diff_map, axis=0)
+
+    max_val = float(np.max(diff_map))
+    if max_val > 1e-7:
+        norm = np.clip(diff_map / max_val * 255.0, 0, 255).astype(np.uint8)
+    else:
+        norm = np.zeros_like(diff_map, dtype=np.uint8)
+
+    img = Image.fromarray(norm, mode="L")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 def summarize_uncertainty(uncertainty_map: np.ndarray) -> dict:
     """
     Summarize spatial uncertainty distribution.

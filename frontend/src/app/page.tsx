@@ -108,11 +108,11 @@ export default function LandingPage() {
         <div className="max-w-[1100px] mx-auto relative" style={{ zIndex: 1 }}>
           <div className="flex flex-col lg:flex-row items-center justify-between gap-6 lg:gap-4">
             {/* ZONE 1 — Text content, clean without background overlay */}
-            <div className="w-full lg:w-[42%] flex flex-col gap-4">
+            <div className="w-full lg:flex-1 min-w-0 flex flex-col gap-4">
               <div className="text-[11px] tracking-[.16em] uppercase" style={{ color: "var(--bsr-phosphor)" }}>
                 SIH26142 · NTRO · Space Technology
               </div>
-              <h1 className="font-bold leading-[1.05]" style={{ fontSize: "clamp(30px,4.5vw,50px)" }}>
+              <h1 className="font-bold leading-[1.05]" style={{ fontSize: "clamp(28px,4vw,48px)" }}>
                 10m is what the<br />satellite sees. <span style={{ color: "var(--bsr-signal)" }}>2.5m</span><br />is what you need.
               </h1>
               <p className="text-sm leading-relaxed max-w-[500px]" style={{ color: "var(--bsr-ink-dim)" }}>
@@ -137,32 +137,36 @@ export default function LandingPage() {
               </div>
             </div>
 
-            {/* ZONE 2 — DEDICATED ORBIT SCENE COLUMN (Desktop only, own reserved space) */}
-            <div className="hidden lg:flex w-[22%] min-w-[190px] items-center justify-center relative self-center" style={{ minHeight: 260 }}>
+            {/* ZONE 2 — DEDICATED ORBIT SCENE COLUMN (Desktop XL only to avoid intermediate crowding) */}
+            <div className="hidden xl:flex w-[200px] shrink-0 items-center justify-center relative self-center" style={{ minHeight: 260 }}>
               <div className="bsr-orbit-wrapper absolute inset-0 pointer-events-none">
                 <OrbitScene />
               </div>
             </div>
 
-            {/* ZONE 3 — HERO PIXEL DISSOLVE SHOWCASE (supporting size) */}
-            <div className="w-full lg:w-[32%] max-w-[300px] shrink-0">
+            {/* ZONE 3 — HERO PIXEL DISSOLVE SHOWCASE (supporting size, static satellite photo) */}
+            <div className="w-full lg:w-[280px] shrink-0">
               <div className="p-3 rounded-2xl border border-zinc-800 bg-zinc-950/90 backdrop-blur-md shadow-[0_0_25px_rgba(245,158,11,0.1)]">
                 <div className="flex items-center justify-between px-1 pb-2 text-[11px] font-mono">
                   <span className="text-amber-400 font-bold flex items-center gap-1.5">
                     <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-                    PIXEL RESOLVE DEMO
+                    BHARATSR PLATFORM
                   </span>
-                  <span className="text-zinc-400 text-[10px]">10m &rarr; 2.5m</span>
+                  <span className="text-zinc-400 text-[10px]">Sentinel-2-Class In Orbit</span>
                 </div>
                 <PixelDissolve
-                  src={preview?.views.sr || "/samples/sr.png"}
-                  alt="BharatSR super-resolution pixel dissolve demonstration"
+                  src="/hero/satellite.jpg"
+                  alt="Sentinel-class Earth observation satellite in orbit"
                   className="w-full"
                   pixelSize={20}
                   duration={700}
                   trigger="hover"
                   label="Hover to resolve"
                 />
+                <div className="px-1 pt-2 text-[10px] font-mono text-zinc-400 flex items-center justify-between border-t border-zinc-900 mt-2">
+                  <span>Spacecraft Hardware</span>
+                  <span className="text-zinc-400">ESA/NASA Sentinel</span>
+                </div>
               </div>
             </div>
           </div>

@@ -101,8 +101,10 @@ def register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=500,
             content={
+                "status": "error",
                 "error": "InternalServerError",
-                "detail": "An internal server error occurred while processing the request.",
-                "status": 500,
+                "detail": f"An unexpected error occurred while processing the request: {type(exc).__name__} - {str(exc)}",
+                "error_type": type(exc).__name__,
+                "message": str(exc),
             },
         )
