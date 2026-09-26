@@ -31,14 +31,14 @@ export function SampleGallery({ className }: { className?: string }) {
 
   return (
     <div className={cn("flex flex-col gap-3 rounded-xl border border-zinc-800 bg-zinc-950 p-4", className)}>
-      <div className="flex items-center justify-between border-b border-zinc-850 pb-2.5">
-        <div className="flex items-center gap-2">
-          <Layers className="w-4 h-4 text-cyan-400" />
-          <h3 className="font-mono text-xs font-semibold uppercase tracking-wider text-zinc-200">
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between border-b border-zinc-850 pb-2.5">
+        <div className="flex items-center gap-2 min-w-0">
+          <Layers className="w-4 h-4 text-cyan-400 shrink-0" />
+          <h3 className="font-mono text-xs font-semibold uppercase tracking-wider text-zinc-200 truncate">
             Target Sentinel-2 Scene
           </h3>
         </div>
-        <span className="font-mono text-xs text-zinc-400 font-medium">
+        <span className="font-mono text-xs text-zinc-400 font-medium shrink-0">
           {samples?.length || 0} Available Scenes
         </span>
       </div>

@@ -117,12 +117,21 @@ export function FieldBoundaryOverlay({ className }: { className?: string }) {
       </div>
 
       {boundaryError && (
-        <div className="p-4 rounded-xl border border-rose-800/60 bg-rose-950/20 text-rose-300 font-mono text-xs flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 shrink-0 text-rose-400 mt-0.5" />
-          <div>
-            <span className="font-bold text-rose-200">Detection Error:</span>
-            <p className="mt-1">{boundaryError.message}</p>
+        <div className="p-4 rounded-xl border border-rose-800/60 bg-rose-950/20 text-rose-300 font-mono text-xs flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 shrink-0 text-rose-400 mt-0.5" />
+            <div>
+              <span className="font-bold text-rose-200">Detection Error:</span>
+              <p className="mt-1">{boundaryError.message}</p>
+            </div>
           </div>
+          <button
+            type="button"
+            onClick={handleDetect}
+            className="px-3 py-1.5 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold transition shrink-0 text-xs"
+          >
+            Retry
+          </button>
         </div>
       )}
 
@@ -134,7 +143,17 @@ export function FieldBoundaryOverlay({ className }: { className?: string }) {
           </div>
         </div>
       ) : boundaryData ? (
-        <>
+        <div className="flex flex-col gap-6">
+          {/* Plain-English Takeaway Lead Banner */}
+          <div className="p-4 rounded-xl border border-amber-500/30 bg-amber-950/20 font-mono text-xs text-amber-300">
+            <span className="font-bold text-amber-200 uppercase tracking-wider block mb-1">
+              Parcel Delineation Impact Takeaway:
+            </span>
+            <p className="text-zinc-200 leading-relaxed font-sans text-xs">
+              BharatSR sharpens parcel delineation gradients by <strong className="text-amber-300">{boundaryData.boundary_improvement_ratio.toFixed(2)}×</strong> over 10m input (edge density: <strong className="text-amber-300">{(boundaryData.sr_edge_density * 100).toFixed(1)}%</strong> vs {(boundaryData.lr_edge_density * 100).toFixed(1)}% raw), resolving distinct inter-field furrows and crop plot boundaries.
+            </p>
+          </div>
+
           <ImageComparisonSlider
             layers={layers}
             initialLeftId="lr-edge"
@@ -148,7 +167,7 @@ export function FieldBoundaryOverlay({ className }: { className?: string }) {
               <span className="text-emerald-400 font-bold text-lg">
                 {boundaryData.boundary_improvement_ratio.toFixed(2)}×
               </span>
-              <span className="text-xs text-zinc-500 block mt-1">Sharpening Ratio</span>
+              <span className="text-[10px] text-zinc-500 block mt-1">Sharpening Ratio (Higher is better, &gt;1.0×)</span>
             </div>
 
             <div className="p-3.5 rounded-lg border border-zinc-800 bg-zinc-950 font-mono">
@@ -156,8 +175,8 @@ export function FieldBoundaryOverlay({ className }: { className?: string }) {
               <span className="text-amber-300 font-bold text-lg">
                 {(boundaryData.sr_edge_density * 100).toFixed(2)}%
               </span>
-              <span className="text-xs text-zinc-500 block mt-1">
-                {boundaryData.sr_edge_pixel_count} Pixels
+              <span className="text-[10px] text-zinc-500 block mt-1">
+                {boundaryData.sr_edge_pixel_count} Resolved Pixels
               </span>
             </div>
 
@@ -166,8 +185,8 @@ export function FieldBoundaryOverlay({ className }: { className?: string }) {
               <span className="text-zinc-200 font-bold text-lg">
                 {(boundaryData.lr_edge_density * 100).toFixed(2)}%
               </span>
-              <span className="text-xs text-zinc-500 block mt-1">
-                {boundaryData.lr_edge_pixel_count} Pixels
+              <span className="text-[10px] text-zinc-500 block mt-1">
+                {boundaryData.lr_edge_pixel_count} Raw Baseline Pixels
               </span>
             </div>
 
@@ -176,23 +195,29 @@ export function FieldBoundaryOverlay({ className }: { className?: string }) {
               <span className="text-cyan-300 font-bold text-lg uppercase">
                 {boundaryData.method}
               </span>
-              <span className="text-xs text-zinc-500 block mt-1">Spatial Kernel</span>
+              <span className="text-[10px] text-zinc-500 block mt-1">Mathematical Spatial Kernel</span>
             </div>
           </div>
-        </>
+        </div>
       ) : (
-        <div className="p-12 rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 text-center font-mono text-xs text-zinc-400 flex flex-col items-center gap-3">
-          <Maximize2 className="w-8 h-8 text-zinc-600" />
-          <span className="text-zinc-300 font-medium">
-            No field boundary analysis has been generated for the current run.
-          </span>
+        <div className="p-10 rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 text-center font-mono text-xs text-zinc-400 flex flex-col items-center gap-3">
+          <Maximize2 className="w-8 h-8 text-amber-500/60" />
+          <div className="max-w-md space-y-1">
+            <span className="text-zinc-200 font-bold block text-sm">
+              Objective: High-Frequency Parcel Edge Delineation
+            </span>
+            <p className="text-zinc-400 text-xs font-sans leading-relaxed">
+              Applies directional gradient and Laplacian spatial operators to detect high-frequency parcel boundaries and agricultural plot edges sharpened by 4× super-resolution.
+            </p>
+          </div>
           <button
             type="button"
             onClick={handleDetect}
             disabled={!currentRunId && !selectedSample}
-            className="mt-2 px-4 py-2 rounded bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold transition"
+            className="mt-3 inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold transition shadow-lg shadow-amber-500/20 active:scale-95"
           >
-            Detect Field Boundaries
+            <Play className="w-4 h-4 fill-current" />
+            <span>Detect Field Boundaries</span>
           </button>
         </div>
       )}

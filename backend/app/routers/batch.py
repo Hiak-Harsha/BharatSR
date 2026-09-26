@@ -18,7 +18,6 @@ from backend.app.deps import (
     get_settings,
     get_job_store,
     get_thread_pool,
-    verify_api_key,
     check_rate_limit,
     check_upload_size,
     read_uploaded_file_capped,
@@ -36,7 +35,7 @@ router = APIRouter(tags=["batch"])
 @router.post(
     "/api/batch",
     response_model=BatchSubmitResponse,
-    dependencies=[Depends(check_rate_limit), Depends(check_upload_size), Depends(verify_api_key)],
+    dependencies=[Depends(check_rate_limit), Depends(check_upload_size)],
 )
 async def batch_superresolve(
     files: List[UploadFile] = File(None),

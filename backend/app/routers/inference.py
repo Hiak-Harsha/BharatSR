@@ -21,7 +21,6 @@ from backend.app.deps import (
     get_model_registry,
     get_job_store,
     get_thread_pool,
-    verify_api_key,
     check_rate_limit,
     check_upload_size,
     read_uploaded_file_capped,
@@ -153,7 +152,7 @@ def _run_superresolve_sync(
 @router.post(
     "/api/superresolve",
     response_model=SuperResolveResponse,
-    dependencies=[Depends(check_rate_limit), Depends(check_upload_size), Depends(verify_api_key)],
+    dependencies=[Depends(check_rate_limit), Depends(check_upload_size)],
 )
 async def superresolve(
     file: UploadFile = File(None),
@@ -202,7 +201,7 @@ async def superresolve(
 @router.post(
     "/api/superresolve/async",
     response_model=AsyncJobSubmitResponse,
-    dependencies=[Depends(check_rate_limit), Depends(check_upload_size), Depends(verify_api_key)],
+    dependencies=[Depends(check_rate_limit), Depends(check_upload_size)],
 )
 async def superresolve_async(
     file: UploadFile = File(None),
@@ -388,7 +387,7 @@ def _run_compare_sync(
 @router.post(
     "/api/compare",
     response_model=CompareResponse,
-    dependencies=[Depends(check_rate_limit), Depends(check_upload_size), Depends(verify_api_key)],
+    dependencies=[Depends(check_rate_limit), Depends(check_upload_size)],
 )
 async def compare(
     file: UploadFile = File(None),
@@ -658,8 +657,11 @@ def _run_downstream_masks_sync(
             ground_truth_pixel_count=int(mask_gt.sum()),
             masks={
                 "bicubic": f"data:image/png;base64,{base64.b64encode(png_bicubic).decode('utf-8')}",
+                "bicubic_mask": f"data:image/png;base64,{base64.b64encode(png_bicubic).decode('utf-8')}",
                 "rcan": f"data:image/png;base64,{base64.b64encode(png_rcan).decode('utf-8')}",
+                "sr_mask": f"data:image/png;base64,{base64.b64encode(png_rcan).decode('utf-8')}",
                 "ground_truth": f"data:image/png;base64,{base64.b64encode(png_gt).decode('utf-8')}" if png_gt else "",
+                "ground_truth_mask": f"data:image/png;base64,{base64.b64encode(png_gt).decode('utf-8')}" if png_gt else "",
             }
         )
 

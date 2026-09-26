@@ -131,12 +131,22 @@ export function CompareGrid({ className }: { className?: string }) {
       </div>
 
       {compareError && (
-        <div className="p-4 rounded-xl border border-rose-800/60 bg-rose-950/20 text-rose-300 font-mono text-xs flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 shrink-0 text-rose-400 mt-0.5" />
-          <div>
-            <span className="font-bold text-rose-200">Comparison Failed:</span>
-            <p className="mt-1">{compareError.message}</p>
+        <div className="p-4 rounded-xl border border-rose-800/60 bg-rose-950/20 text-rose-300 font-mono text-xs flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3 min-w-0 flex-1">
+            <AlertCircle className="w-5 h-5 shrink-0 text-rose-400 mt-0.5" />
+            <div className="min-w-0">
+              <span className="font-bold text-rose-200">Comparison Notice:</span>
+              <p className="mt-1 break-words">{compareError.message}</p>
+            </div>
           </div>
+          <button
+            type="button"
+            onClick={handleRunCompare}
+            disabled={isComparing}
+            className="px-3 py-1.5 rounded bg-rose-900/60 hover:bg-rose-800 text-rose-100 text-xs font-bold shrink-0 transition"
+          >
+            Retry
+          </button>
         </div>
       )}
 
@@ -151,7 +161,24 @@ export function CompareGrid({ className }: { className?: string }) {
           </div>
         </div>
       ) : compareData ? (
-        <>
+        <div className="flex flex-col gap-6">
+          {/* Plain-English Takeaway Lead Banner */}
+          {(() => {
+            const rankings = (compareData.rankings as any[]) || [];
+            if (rankings.length === 0) return null;
+            const top = rankings[0];
+            return (
+              <div className="p-4 rounded-xl border border-amber-500/30 bg-amber-950/20 font-mono text-xs text-amber-300">
+                <span className="font-bold text-amber-200 uppercase tracking-wider block mb-1">
+                  Architectural Benchmark Takeaway:
+                </span>
+                <p className="text-zinc-200 leading-relaxed font-sans text-xs">
+                  <strong className="text-amber-300 uppercase">{top?.model_id}</strong> leads the benchmark on this scene with composite score of <strong className="text-amber-300">{(Number(top?.composite_score || 0) * 100).toFixed(1)}/100</strong>, delivering superior structural retention and radiometric fidelity over baseline bicubic interpolation.
+                </p>
+              </div>
+            );
+          })()}
+
           {/* Dynamic Multi-Layer Comparison Slider */}
           <ImageComparisonSlider
             layers={layers}
@@ -162,9 +189,14 @@ export function CompareGrid({ className }: { className?: string }) {
           {/* Dynamic Quantitative Comparison Matrix */}
           {table && table.length > 0 && (
             <div className="rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden p-4 shadow-xl">
-              <h3 className="font-mono text-xs font-semibold uppercase tracking-wider text-zinc-200 mb-3">
-                Quantitative Comparison Matrix (Dynamically Populated)
-              </h3>
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                <h3 className="font-mono text-xs font-semibold uppercase tracking-wider text-zinc-200">
+                  Quantitative Comparison Matrix (Dynamically Populated)
+                </h3>
+                <span className="font-mono text-[10px] text-zinc-500">
+                  PSNR / SSIM / UIQI: Higher is better &bull; SAM / ERGAS: Lower is better
+                </span>
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left font-mono text-xs">
                   <thead>
@@ -215,20 +247,23 @@ export function CompareGrid({ className }: { className?: string }) {
               </div>
             </div>
           )}
-        </>
+        </div>
       ) : (
         <div className="p-12 rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 text-center font-mono text-xs text-zinc-400 flex flex-col items-center gap-3">
           <GitCompare className="w-8 h-8 text-zinc-600" />
-          <span className="text-zinc-300 font-medium">
-            Click "Run Full Comparison" to benchmark all loaded model architectures.
+          <p className="text-zinc-200 font-medium text-sm max-w-lg">
+            Directly test how physics-constrained neural models compare against standard bicubic interpolation.
+          </p>
+          <span className="text-zinc-400 text-xs max-w-md">
+            Runs Bicubic, SRCNN, RCAN, and loaded Transformer architectures on identical Sentinel-2 input to measure edge sharpness, spectral angle distortion, and sensor downsample fidelity.
           </span>
           <button
             type="button"
             onClick={handleRunCompare}
             disabled={!selectedSample && !customFile}
-            className="mt-2 px-4 py-2 rounded bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold transition"
+            className="mt-2 px-6 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold transition shadow-lg active:scale-95"
           >
-            Run Full Comparison
+            Run Full Multi-Model Comparison
           </button>
         </div>
       )}

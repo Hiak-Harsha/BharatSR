@@ -13,6 +13,7 @@ services:
         value: "10000"
       - key: BHARATSR_CORS_ORIGINS
         value: "https://bharatsr.vercel.app,http://localhost:3000,http://127.0.0.1:3000"
+      # Optional operator secret: only gates POST /api/models/reload (all public demo endpoints are key-free)
       - key: BHARATSR_API_KEY
         generateValue: true
 

@@ -78,12 +78,21 @@ export function CropHealthMap({ className }: { className?: string }) {
       </div>
 
       {healthError && (
-        <div className="p-4 rounded-xl border border-rose-800/60 bg-rose-950/20 text-rose-300 font-mono text-xs flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 shrink-0 text-rose-400 mt-0.5" />
-          <div>
-            <span className="font-bold text-rose-200">Analysis Error:</span>
-            <p className="mt-1">{healthError.message}</p>
+        <div className="p-4 rounded-xl border border-rose-800/60 bg-rose-950/20 text-rose-300 font-mono text-xs flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 shrink-0 text-rose-400 mt-0.5" />
+            <div>
+              <span className="font-bold text-rose-200">Analysis Error:</span>
+              <p className="mt-1">{healthError.message}</p>
+            </div>
           </div>
+          <button
+            type="button"
+            onClick={handleAnalyze}
+            className="px-3 py-1.5 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold transition shrink-0 text-xs"
+          >
+            Retry
+          </button>
         </div>
       )}
 
@@ -95,104 +104,126 @@ export function CropHealthMap({ className }: { className?: string }) {
           </div>
         </div>
       ) : healthData ? (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Classification Map */}
-          <div className="lg:col-span-2 rounded-xl border border-zinc-800 bg-zinc-950 p-4 flex flex-col gap-3">
-            <h3 className="font-mono text-xs font-semibold uppercase tracking-wider text-zinc-200">
-              Crop Health Zonation Map (2.5m-equivalent SR grid)
-            </h3>
-            <div className="aspect-square w-full rounded-lg overflow-hidden border border-zinc-850 bg-black flex items-center justify-center">
-              <img
-                src={healthData.classification_map}
-                alt="Crop Health Map"
-                className="w-full h-full object-contain"
-              />
-            </div>
+        <div className="flex flex-col gap-6">
+          {/* Plain-English Takeaway Lead Banner */}
+          <div className="p-4 rounded-xl border border-emerald-500/30 bg-emerald-950/20 font-mono text-xs text-emerald-300">
+            <span className="font-bold text-emerald-200 uppercase tracking-wider block mb-1">
+              Agronomic Impact Takeaway:
+            </span>
+            <p className="text-zinc-200 leading-relaxed font-sans text-xs">
+              BharatSR resolves intra-field crop vigor zonation with <strong className="text-emerald-300">+{(healthData.sr_vs_lr_ndvi_uplift * 100).toFixed(1)}%</strong> sharper NDVI sensitivity over 10m raw input, scoring an overall vitality index of <strong className="text-emerald-300">{healthData.health_score.toFixed(1)}/100</strong> across segmented canopy parcels.
+            </p>
           </div>
 
-          {/* Area Stats & Agronomic Recommendations */}
-          <div className="flex flex-col gap-4">
-            <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-950 font-mono text-xs space-y-3">
-              <h3 className="font-semibold uppercase tracking-wider text-zinc-200 border-b border-zinc-850 pb-2">
-                Spectral Indicator Metrics
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Classification Map */}
+            <div className="lg:col-span-2 rounded-xl border border-zinc-800 bg-zinc-950 p-4 flex flex-col gap-3">
+              <h3 className="font-mono text-xs font-semibold uppercase tracking-wider text-zinc-200">
+                Crop Health Zonation Map (2.5m-equivalent SR grid)
               </h3>
-
-              <div className="grid grid-cols-2 gap-2.5">
-                <div className="bg-zinc-900/60 p-3 rounded border border-zinc-800">
-                  <span className="text-zinc-400 text-xs block">Health Score</span>
-                  <span className="text-emerald-400 font-bold text-lg">
-                    {healthData.health_score.toFixed(1)}/100
-                  </span>
-                </div>
-                <div className="bg-zinc-900/60 p-3 rounded border border-zinc-800">
-                  <span className="text-zinc-400 text-xs block">NDVI Uplift</span>
-                  <span className="text-cyan-400 font-bold text-lg">
-                    +{(healthData.sr_vs_lr_ndvi_uplift * 100).toFixed(1)}%
-                  </span>
-                </div>
-                <div className="bg-zinc-900/60 p-3 rounded border border-zinc-800">
-                  <span className="text-zinc-400 text-xs block">Mean NDVI</span>
-                  <span className="text-zinc-100 font-bold text-sm">
-                    {healthData.mean_ndvi.toFixed(3)}
-                  </span>
-                </div>
-                <div className="bg-zinc-900/60 p-3 rounded border border-zinc-800">
-                  <span className="text-zinc-400 text-xs block">Mean EVI</span>
-                  <span className="text-zinc-100 font-bold text-sm">
-                    {healthData.mean_evi.toFixed(3)}
-                  </span>
-                </div>
+              <div className="aspect-square w-full rounded-lg overflow-hidden border border-zinc-850 bg-black flex items-center justify-center">
+                <img
+                  src={healthData.classification_map}
+                  alt="Crop Health Map"
+                  className="w-full h-full object-contain"
+                />
               </div>
             </div>
 
-            {/* Area Distribution */}
-            <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-950 font-mono text-xs space-y-2.5">
-              <h3 className="font-semibold uppercase tracking-wider text-zinc-200 border-b border-zinc-850 pb-2">
-                Class Distribution
-              </h3>
-              <div className="space-y-2">
-                {Object.entries(healthData.area_statistics || {}).map(([key, stat]: [string, any]) => (
-                  <div key={key} className="flex items-center justify-between text-xs">
-                    <span className="text-zinc-300 capitalize">{key.replace(/_/g, " ")}:</span>
-                    <span className="font-bold text-zinc-100">
-                      {(stat.percentage ?? 0).toFixed(1)}% ({stat.pixel_count} px)
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Recommendations */}
-            {healthData.recommendations && healthData.recommendations.length > 0 && (
-              <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-950 font-mono text-xs space-y-2">
+            {/* Area Stats & Agronomic Recommendations */}
+            <div className="flex flex-col gap-4">
+              <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-950 font-mono text-xs space-y-3">
                 <h3 className="font-semibold uppercase tracking-wider text-zinc-200 border-b border-zinc-850 pb-2">
-                  Rule-based Interpretation
+                  Spectral Indicator Metrics
                 </h3>
-                <ul className="space-y-2 text-zinc-300 text-xs">
-                  {healthData.recommendations.map((rec, i) => (
-                    <li key={i} className="flex items-start gap-2">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                      <span>{rec}</span>
-                    </li>
-                  ))}
-                </ul>
+
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div className="bg-zinc-900/60 p-3 rounded border border-zinc-800">
+                    <span className="text-zinc-400 text-xs block">Health Score</span>
+                    <span className="text-emerald-400 font-bold text-lg">
+                      {healthData.health_score.toFixed(1)}/100
+                    </span>
+                    <span className="text-[10px] text-zinc-500 block mt-0.5">Composite Vigor (0-100)</span>
+                  </div>
+                  <div className="bg-zinc-900/60 p-3 rounded border border-zinc-800">
+                    <span className="text-zinc-400 text-xs block">NDVI Uplift</span>
+                    <span className="text-cyan-400 font-bold text-lg">
+                      +{(healthData.sr_vs_lr_ndvi_uplift * 100).toFixed(1)}%
+                    </span>
+                    <span className="text-[10px] text-zinc-500 block mt-0.5">Canopy Boundary Gain</span>
+                  </div>
+                  <div className="bg-zinc-900/60 p-3 rounded border border-zinc-800">
+                    <span className="text-zinc-400 text-xs block">Mean NDVI</span>
+                    <span className="text-zinc-100 font-bold text-sm">
+                      {healthData.mean_ndvi.toFixed(3)}
+                    </span>
+                    <span className="text-[10px] text-zinc-500 block mt-0.5">Vegetation Density</span>
+                  </div>
+                  <div className="bg-zinc-900/60 p-3 rounded border border-zinc-800">
+                    <span className="text-zinc-400 text-xs block">Mean EVI</span>
+                    <span className="text-zinc-100 font-bold text-sm">
+                      {healthData.mean_evi.toFixed(3)}
+                    </span>
+                    <span className="text-[10px] text-zinc-500 block mt-0.5">Aerosol-Adjusted Index</span>
+                  </div>
+                </div>
               </div>
-            )}
+
+              {/* Area Distribution */}
+              <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-950 font-mono text-xs space-y-2.5">
+                <h3 className="font-semibold uppercase tracking-wider text-zinc-200 border-b border-zinc-850 pb-2">
+                  Class Distribution
+                </h3>
+                <div className="space-y-2">
+                  {Object.entries(healthData.area_statistics || {}).map(([key, stat]: [string, any]) => (
+                    <div key={key} className="flex items-center justify-between text-xs">
+                      <span className="text-zinc-300 capitalize">{key.replace(/_/g, " ")}:</span>
+                      <span className="font-bold text-zinc-100">
+                        {(stat.percentage ?? 0).toFixed(1)}% ({stat.pixel_count} px)
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Recommendations */}
+              {healthData.recommendations && healthData.recommendations.length > 0 && (
+                <div className="p-4 rounded-xl border border-zinc-800 bg-zinc-950 font-mono text-xs space-y-2">
+                  <h3 className="font-semibold uppercase tracking-wider text-zinc-200 border-b border-zinc-850 pb-2">
+                    Rule-based Interpretation
+                  </h3>
+                  <ul className="space-y-2 text-zinc-300 text-xs">
+                    {healthData.recommendations.map((rec, i) => (
+                      <li key={i} className="flex items-start gap-2">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                        <span>{rec}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       ) : (
-        <div className="p-12 rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 text-center font-mono text-xs text-zinc-400 flex flex-col items-center gap-3">
-          <Sprout className="w-8 h-8 text-zinc-600" />
-          <span className="text-zinc-300 font-medium">
-            No crop health analysis has been generated for the current run.
-          </span>
+        <div className="p-10 rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 text-center font-mono text-xs text-zinc-400 flex flex-col items-center gap-3">
+          <Sprout className="w-8 h-8 text-emerald-500/60" />
+          <div className="max-w-md space-y-1">
+            <span className="text-zinc-200 font-bold block text-sm">
+              Objective: Intra-Field Canopy Vigor Zonation
+            </span>
+            <p className="text-zinc-400 text-xs font-sans leading-relaxed">
+              Translates 2.5m super-resolved multi-spectral reflectance into localized crop health zones (healthy, moderate, stressed, bare soil) to identify sub-acre management units not discernible at 10m.
+            </p>
+          </div>
           <button
             type="button"
             onClick={handleAnalyze}
             disabled={!currentRunId && !selectedSample}
-            className="mt-2 px-4 py-2 rounded bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold transition"
+            className="mt-3 inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-bold transition shadow-lg shadow-emerald-500/20 active:scale-95"
           >
-            Compute Crop Health Indicators
+            <Play className="w-4 h-4 fill-current" />
+            <span>Compute Crop Health Indicators</span>
           </button>
         </div>
       )}

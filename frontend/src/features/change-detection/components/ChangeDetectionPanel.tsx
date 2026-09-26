@@ -218,12 +218,21 @@ export function ChangeDetectionPanel({ className }: { className?: string }) {
       </div>
 
       {changeError && (
-        <div className="p-4 rounded-xl border border-rose-800/60 bg-rose-950/20 text-rose-300 font-mono text-xs flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 shrink-0 text-rose-400 mt-0.5" />
-          <div>
-            <span className="font-bold text-rose-200">Change Detection Failed:</span>
-            <p className="mt-1">{changeError.message}</p>
+        <div className="p-4 rounded-xl border border-rose-800/60 bg-rose-950/20 text-rose-300 font-mono text-xs flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 shrink-0 text-rose-400 mt-0.5" />
+            <div>
+              <span className="font-bold text-rose-200">Change Detection Failed:</span>
+              <p className="mt-1">{changeError.message}</p>
+            </div>
           </div>
+          <button
+            type="button"
+            onClick={handleDetect}
+            className="px-3 py-1.5 rounded bg-rose-600 hover:bg-rose-500 text-white font-bold transition shrink-0 text-xs"
+          >
+            Retry
+          </button>
         </div>
       )}
 
@@ -236,6 +245,16 @@ export function ChangeDetectionPanel({ className }: { className?: string }) {
         </div>
       ) : changeData ? (
         <div className="flex flex-col gap-6">
+          {/* Plain-English Takeaway Lead Banner */}
+          <div className="p-4 rounded-xl border border-cyan-500/30 bg-cyan-950/20 font-mono text-xs text-cyan-300">
+            <span className="font-bold text-cyan-200 uppercase tracking-wider block mb-1">
+              Temporal Divergence Impact Takeaway:
+            </span>
+            <p className="text-zinc-200 leading-relaxed font-sans text-xs">
+              Bi-temporal comparison indicates <strong className="text-cyan-300">{stats.significant_change_pct != null ? `${stats.significant_change_pct.toFixed(2)}%` : 'localized'}</strong> significant canopy transition between epochs with mean NDVI shift of <strong className="text-cyan-300">{stats.ndvi_change != null ? (stats.ndvi_change >= 0 ? `+${stats.ndvi_change.toFixed(3)}` : stats.ndvi_change.toFixed(3)) : '0.000'}</strong> — revealing verifiable field-scale biomass progression over time.
+            </p>
+          </div>
+
           {/* Maps Grid */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-3 flex flex-col gap-2">
@@ -287,7 +306,7 @@ export function ChangeDetectionPanel({ className }: { className?: string }) {
                   ? `${stats.significant_change_pct.toFixed(2)}%`
                   : "N/A"}
               </span>
-              <span className="text-xs text-zinc-500 block mt-0.5">Thresholded Area</span>
+              <span className="text-[10px] text-zinc-500 block mt-0.5">Thresholded Divergent Area (% of scene)</span>
             </div>
 
             <div className="p-3 rounded-lg border border-zinc-800 bg-zinc-950 font-mono">
@@ -295,7 +314,7 @@ export function ChangeDetectionPanel({ className }: { className?: string }) {
               <span className="text-cyan-400 font-bold text-lg">
                 {stats.ndvi_change != null ? stats.ndvi_change.toFixed(3) : "N/A"}
               </span>
-              <span className="text-xs text-zinc-500 block mt-0.5">Mean Difference</span>
+              <span className="text-[10px] text-zinc-500 block mt-0.5">Mean Shift (+gain, -loss)</span>
             </div>
 
             <div className="p-3 rounded-lg border border-zinc-800 bg-zinc-950 font-mono">
@@ -303,7 +322,7 @@ export function ChangeDetectionPanel({ className }: { className?: string }) {
               <span className="text-zinc-200 font-bold text-lg">
                 {stats.mean_spectral_diff != null ? stats.mean_spectral_diff.toFixed(4) : "N/A"}
               </span>
-              <span className="text-xs text-zinc-500 block mt-0.5">Euclidean Norm</span>
+              <span className="text-[10px] text-zinc-500 block mt-0.5">Multi-Spectral Euclidean Norm</span>
             </div>
 
             <div className="p-3 rounded-lg border border-zinc-800 bg-zinc-950 font-mono">
@@ -311,7 +330,7 @@ export function ChangeDetectionPanel({ className }: { className?: string }) {
               <span className="text-zinc-200 font-bold text-lg">
                 {stats.max_change_magnitude != null ? stats.max_change_magnitude.toFixed(3) : "N/A"}
               </span>
-              <span className="text-xs text-zinc-500 block mt-0.5">Peak Anomaly</span>
+              <span className="text-[10px] text-zinc-500 block mt-0.5">Peak Local Anomaly</span>
             </div>
           </div>
 
@@ -332,9 +351,25 @@ export function ChangeDetectionPanel({ className }: { className?: string }) {
           )}
         </div>
       ) : (
-        <div className="p-12 rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 text-center font-mono text-sm text-zinc-400 flex flex-col items-center gap-3">
-          <History className="w-8 h-8 text-zinc-600" />
-          <span>Select two compatible scenes to compare.</span>
+        <div className="p-10 rounded-xl border border-dashed border-zinc-800 bg-zinc-950/40 text-center font-mono text-xs text-zinc-400 flex flex-col items-center gap-3">
+          <History className="w-8 h-8 text-amber-500/60" />
+          <div className="max-w-md space-y-1">
+            <span className="text-zinc-200 font-bold block text-sm">
+              Objective: Multi-Temporal Phenology & Change Tracking
+            </span>
+            <p className="text-zinc-400 text-xs font-sans leading-relaxed">
+              Detects bi-temporal land-cover changes, crop growth cycles, and seasonal harvest shifts by registering and comparing calibrated multi-spectral super-resolved rasters.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleDetect}
+            disabled={!isCompatible}
+            className="mt-3 inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold transition shadow-lg shadow-amber-500/20 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Play className="w-4 h-4 fill-current" />
+            <span>Execute Change Detection</span>
+          </button>
         </div>
       )}
     </div>

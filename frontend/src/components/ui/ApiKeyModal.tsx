@@ -61,7 +61,7 @@ export function ApiKeyModal() {
             </div>
 
             <p className="text-zinc-400 text-xs mb-3 leading-relaxed">
-              If your deployed backend runs with <code className="text-amber-400">BHARATSR_API_KEY</code> enabled, enter your secret key below to authenticate client requests.
+              The public BharatSR demo runs in open key-free mode for all inference, comparison, and analysis features. An API key is only needed for operator-restricted admin tasks (e.g. model reload).
             </p>
 
             <div className="space-y-1.5 mb-4">

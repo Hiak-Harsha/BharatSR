@@ -163,7 +163,7 @@ function normalizeErrorResponse(
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const url = `${getApiBase()}${path}`;
   const headers = new Headers(options.headers || {});
-  const timeoutMs = options.timeoutMs || 30000;
+  const timeoutMs = options.timeoutMs || 60000;
 
   // Inject API key if configured (from localStorage or environment variable)
   if (typeof window !== "undefined") {
@@ -217,16 +217,23 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     if (err.name === "AbortError") {
       throw new ApiError({
         status: 408,
-        message: "Request timed out. Check the Jobs panel if this operation was submitted asynchronously.",
-        actionToFix: "Try running in Fast mode or submit as an asynchronous batch job.",
+        message: "Request timed out while waiting for computation.",
+        actionToFix: "If the backend is waking from a cold start, please retry in a moment.",
         endpoint: path,
         technicalDetails: `Timeout: ${timeoutMs}ms exceeded on ${path}`,
       });
     }
+    const isNetworkFetchError =
+      !err.status ||
+      (typeof err.message === "string" && (err.message.includes("Failed to fetch") || err.message.includes("NetworkError"))) ||
+      err.name === "TypeError";
+
     throw new ApiError({
       status: 0,
-      message: err.message || "Network connection failure.",
-      actionToFix: "Verify that the BharatSR FastAPI backend is running and reachable.",
+      message: isNetworkFetchError
+        ? "Could not reach the analysis service. If this is the first request in a while, the backend may still be starting up — please try again in a moment."
+        : (err.message || "Network connection failure."),
+      actionToFix: "Verify that the BharatSR backend is reachable and click Retry.",
       endpoint: path,
       technicalDetails: String(err),
     });
@@ -450,6 +457,7 @@ export async function getDownstreamMasks(
   return request<DownstreamMasksResponse>("/api/downstream-masks", {
     method: "POST",
     body: form,
+    timeoutMs: 120000,
   });
 }
 

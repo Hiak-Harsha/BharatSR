@@ -45,26 +45,28 @@ export function ModelSelector({ className }: { className?: string }) {
                 type="button"
                 onClick={() => setSelectedModel(model.id)}
                 className={cn(
-                  "flex items-start justify-between p-3.5 rounded-lg border text-left transition-all",
+                  "flex items-start justify-between gap-3 p-3.5 rounded-lg border text-left transition-all min-w-0 w-full",
                   isSelected
                     ? "border-amber-500/80 bg-amber-950/20 shadow-[0_0_12px_rgba(245,158,11,0.15)] ring-1 ring-amber-500/40"
                     : "border-zinc-800 bg-zinc-900/60 hover:bg-zinc-850 hover:border-zinc-700"
                 )}
               >
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-sm font-bold text-zinc-100">{model.name}</span>
-                    {isSelected && <CheckCircle2 className="w-4 h-4 text-amber-400" />}
+                <div className="space-y-1 min-w-0 flex-1">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-mono text-sm font-bold text-zinc-100 break-words" title={model.name}>
+                      {model.name}
+                    </span>
+                    {isSelected && <CheckCircle2 className="w-4 h-4 text-amber-400 shrink-0" />}
                   </div>
-                  <p className="font-mono text-xs text-zinc-400">
+                  <p className="font-mono text-xs text-zinc-400 break-words">
                     {model.architecture}
                   </p>
                   <div className="pt-1 flex flex-wrap items-center gap-2">
-                    <span className="text-xs font-mono text-zinc-400">
+                    <span className="text-xs font-mono text-zinc-400 shrink-0">
                       4× SR · {model.n_bands} bands
                     </span>
                     {supportsUncertainty && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-cyan-950/80 text-cyan-300 border border-cyan-800/60">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono bg-cyan-950/80 text-cyan-300 border border-cyan-800/60 shrink-0">
                         Predicted uncertainty
                       </span>
                     )}
@@ -73,7 +75,7 @@ export function ModelSelector({ className }: { className?: string }) {
 
                 <span
                   className={cn(
-                    "text-xs font-mono uppercase px-2.5 py-1 rounded font-medium",
+                    "text-xs font-mono uppercase px-2 py-0.5 rounded font-medium shrink-0",
                     model.status === "loaded"
                       ? "text-emerald-400 bg-emerald-950/60 border border-emerald-800/50"
                       : "text-zinc-500 bg-zinc-800"

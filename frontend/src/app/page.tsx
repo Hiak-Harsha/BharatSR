@@ -106,19 +106,16 @@ export default function LandingPage() {
         <div className="bsr-hero-grid" />
 
         <div className="max-w-[1100px] mx-auto relative" style={{ zIndex: 1 }}>
-          <div className="flex flex-col lg:flex-row items-center justify-between gap-10">
-            <div className="w-full lg:w-1/2 flex flex-col gap-4 relative">
-              {/* OrbitScene — scoped to left text column only */}
-              <div className="bsr-orbit-wrapper absolute inset-0 -z-10 pointer-events-none overflow-visible">
-                <OrbitScene />
-              </div>
+          <div className="flex flex-col lg:flex-row items-center justify-between gap-6 lg:gap-4">
+            {/* ZONE 1 — Text content, clean without background overlay */}
+            <div className="w-full lg:w-[42%] flex flex-col gap-4">
               <div className="text-[11px] tracking-[.16em] uppercase" style={{ color: "var(--bsr-phosphor)" }}>
                 SIH26142 · NTRO · Space Technology
               </div>
-              <h1 className="font-bold leading-[1.05]" style={{ fontSize: "clamp(32px,5.5vw,54px)" }}>
+              <h1 className="font-bold leading-[1.05]" style={{ fontSize: "clamp(30px,4.5vw,50px)" }}>
                 10m is what the<br />satellite sees. <span style={{ color: "var(--bsr-signal)" }}>2.5m</span><br />is what you need.
               </h1>
-              <p className="text-sm leading-relaxed max-w-[520px]" style={{ color: "var(--bsr-ink-dim)" }}>
+              <p className="text-sm leading-relaxed max-w-[500px]" style={{ color: "var(--bsr-ink-dim)" }}>
                 BharatSR is a physics-constrained super-resolution engine that lifts Sentinel-2 4-band imagery to a
                 2.5m-equivalent analysis grid — without inventing what isn&apos;t there. Every pixel is verified: it
                 must degrade back to exactly what the sensor measured.
@@ -131,30 +128,37 @@ export default function LandingPage() {
                   Benchmark Perspectives &darr;
                 </a>
               </div>
-              <div className="flex items-center gap-4 text-xs font-mono text-zinc-400 pt-2">
-                <span>Native GSD: <b className="text-amber-400">10.0m</b></span>
+              <div className="flex items-center gap-3 text-xs font-mono text-zinc-400 pt-2 flex-wrap">
+                <span>Native: <b className="text-amber-400">10.0m</b></span>
                 <span>•</span>
-                <span>SR Output: <b className="text-cyan-400">2.5m-equiv</b></span>
+                <span>SR: <b className="text-cyan-400">2.5m-equiv</b></span>
                 <span>•</span>
-                <span>Observation Consistency MAE: <b className="text-emerald-400">0.000</b></span>
+                <span>Consistency MAE: <b className="text-emerald-400">0.000</b></span>
               </div>
             </div>
 
-            {/* HERO PIXEL DISSOLVE SHOWCASE */}
-            <div className="w-full lg:w-5/12 max-w-[360px] shrink-0">
-              <div className="p-3 rounded-2xl border border-zinc-800 bg-zinc-950/90 backdrop-blur-md shadow-[0_0_30px_rgba(245,158,11,0.12)]">
+            {/* ZONE 2 — DEDICATED ORBIT SCENE COLUMN (Desktop only, own reserved space) */}
+            <div className="hidden lg:flex w-[22%] min-w-[190px] items-center justify-center relative self-center" style={{ minHeight: 260 }}>
+              <div className="bsr-orbit-wrapper absolute inset-0 pointer-events-none">
+                <OrbitScene />
+              </div>
+            </div>
+
+            {/* ZONE 3 — HERO PIXEL DISSOLVE SHOWCASE (supporting size) */}
+            <div className="w-full lg:w-[32%] max-w-[300px] shrink-0">
+              <div className="p-3 rounded-2xl border border-zinc-800 bg-zinc-950/90 backdrop-blur-md shadow-[0_0_25px_rgba(245,158,11,0.1)]">
                 <div className="flex items-center justify-between px-1 pb-2 text-[11px] font-mono">
                   <span className="text-amber-400 font-bold flex items-center gap-1.5">
                     <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
                     PIXEL RESOLVE DEMO
                   </span>
-                  <span className="text-zinc-400 text-[10px]">10m RAW &rarr; 2.5m RESOLVED</span>
+                  <span className="text-zinc-400 text-[10px]">10m &rarr; 2.5m</span>
                 </div>
                 <PixelDissolve
                   src={preview?.views.sr || "/samples/sr.png"}
                   alt="BharatSR super-resolution pixel dissolve demonstration"
                   className="w-full"
-                  pixelSize={24}
+                  pixelSize={20}
                   duration={700}
                   trigger="hover"
                   label="Hover to resolve"
